@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bot Data Search Dashboard</title>
+    <!-- Import Telegram WebApp JS -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Modern fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f0f4f8;
+            --text-color: #1e293b;
+            --text-muted: #64748b;
+            --card-bg: rgba(255, 255, 255, 0.75);
+            --border-color: rgba(226, 232, 240, 0.8);
+            --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --accent-color: rgba(59, 130, 246, 0.1);
+            --shadow: 0 10px 30px -5px rgba(59, 130, 246, 0.05), 0 4px 12px -2px rgba(59, 130, 246, 0.03);
+            --header-bg: rgba(255, 255, 255, 0.85);
+            --glass-blur: blur(16px);
+        }
+
+        /* Auto dark mode detection / Telegram integration */
+        body.dark-mode {
+            --bg-color: #0b132b;
+            --text-color: #f8fafc;
+            --text-muted: #94a3b8;
+            --card-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(51, 65, 85, 0.5);
+            --primary-gradient: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+            --primary-color: #3b82f6;
+            --primary-hover: #60a5fa;
+            --accent-color: rgba(59, 130, 246, 0.15);
+            --shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
+            --header-bg: rgba(15, 23, 42, 0.8);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            transition: background-color 0.4s, color 0.4s, border-color 0.4s, transform 0.2s, box-shadow 0.2s;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 16px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        header {
+            background: var(--header-bg);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            margin-bottom: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--primary-gradient);
+        }
+
+        .header-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-title span.logo-icon {
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 1.6rem;
+        }
+
+        .header-subtitle {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-weight: 500;
+        }
+
+        .search-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .search-box {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 14px 18px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+            color: var(--text-color);
+            font-size: 0.95rem;
+            font-weight: 500;
+            outline: none;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.01);
+        }
+
+        .search-box input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 4px var(--accent-color);
+        }
+
+        .filters {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        select {
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+            color: var(--text-color);
+            font-size: 0.85rem;
+            font-weight: 600;
+            outline: none;
+            cursor: pointer;
+            width: 100%;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2.5' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 16px;
+            padding-right: 36px;
+        }
+
+        select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 4px var(--accent-color);
+        }
+
+        .badge-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 16px;
+        }
+
+        .badge {
+            background: var(--accent-color);
+            color: var(--primary-color);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 0.75rem;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+
+        .live-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #10b981;
+            box-shadow: 0 0 8px #10b981;
+            display: inline-block;
+        }
+
+        .status-dot.demo {
+            background-color: #f59e0b;
+            box-shadow: 0 0 8px #f59e0b;
+        }
+
+        /* Results Area */
+        .results-container {
+            flex-grow: 1;
+            background: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 700;
+            font-size: 1.05rem;
+            letter-spacing: -0.01em;
+        }
+
+        .results-scroll {
+            flex-grow: 1;
+            overflow-y: auto;
+            max-height: calc(100vh - 290px);
+            border-radius: 12px;
+            padding-right: 4px;
+        }
+
+        /* Scrollbar Styling */
+        .results-scroll::-webkit-scrollbar {
+            width: 5px;
+        }
+        .results-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .results-scroll::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 10px;
+        }
+
+        /* Dynamic Data Cards */
+        .data-card {
+            background: var(--header-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.01);
+        }
+
+        .data-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.03);
+            border-color: var(--primary-color);
+        }
+
+        .card-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+        }
+
+        .card-label {
+            font-weight: 600;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        .card-value {
+            font-weight: 700;
+            text-align: right;
+            max-width: 70%;
+            word-break: break-word;
+        }
+
+        .card-address {
+            margin-top: 6px;
+            padding-top: 10px;
+            border-top: 1px dashed var(--border-color);
+            font-size: 0.8rem;
+            line-height: 1.4;
+            color: var(--text-color);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 50px 20px;
+            text-align: center;
+            color: var(--text-muted);
+            gap: 12px;
+        }
+
+        .empty-icon {
+            font-size: 3rem;
+            filter: drop-shadow(0 4px 12px var(--accent-color));
+        }
+
+        /* Button Glow Up */
+        .close-btn {
+            background: var(--primary-gradient);
+            color: #ffffff;
+            border: none;
+            padding: 14px;
+            border-radius: 14px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 700;
+            font-size: 1rem;
+            width: 100%;
+            margin-top: 16px;
+            cursor: pointer;
+            box-shadow: 0 8px 24px -6px rgba(59, 130, 246, 0.35);
+        }
+
+        .close-btn:hover {
+            box-shadow: 0 12px 28px -4px rgba(59, 130, 246, 0.5);
+            transform: scale(1.01);
+        }
+        
+        .close-btn:active {
+            transform: scale(0.99);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">
+            <span class="logo-icon">⚡</span> Data Explorer
+        </div>
+        <div class="header-subtitle">Search, filter, and inspect delivery items instantly</div>
+
+        <div class="search-container">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search address, store or ID..." oninput="filterData()">
+            </div>
+            
+            <div class="filters">
+                <select id="provinceFilter" onchange="onProvinceChange()">
+                    <option value="">All Provinces</option>
+                </select>
+                <select id="districtFilter" onchange="filterData()">
+                    <option value="">All Districts</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="badge-bar">
+            <div class="badge" id="resultsCount">0 items found</div>
+            <div class="live-status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="results-container">
+        <div class="results-header">
+            <span>Delivery Items</span>
+        </div>
+        
+        <div class="results-scroll" id="resultsList">
+            <!-- Dynamic data cards go here -->
+        </div>
+    </div>
+
+    <button class="close-btn" onclick="closeApp()">Back to Chat</button>
+
+    <script>
+        // Telegram WebApp Setup
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        // Set theme automatically from Telegram settings
+        if (tg.colorScheme === 'dark') {
+            document.body.classList.add('dark-mode');
+        }
+
+        // Mock data to test locally if no data query param is passed
+        const mockData = [
+            { id: "1001", province: "Vientiane", district: "Chanthabouly", store: "Dongpalane Shop", address: "Unit 12, Dongpalane Road, Vientiane Capital" },
+            { id: "1002", province: "Vientiane", district: "Sikhottabong", store: "Wattay Terminal", address: "Sikhottabong, near Wattay Airport" },
+            { id: "1003", province: "Champasak", district: "Pakse", store: "Pakse Central Post Office", address: "Road No.13, Pakse" },
+            { id: "1004", province: "Luang Prabang", district: "Luang Prabang", store: "Old Town Hub", address: "Sisavangvong Road, Luang Prabang" },
+            { id: "1005", province: "Savannakhet", district: "Kaysone Phomvihane", store: "Kaysone Express", address: "Mekong Riverside St, Savannakhet" }
+        ];
+
+        let allData = [];
+
+        // Load data on start
+        window.addEventListener('DOMContentLoaded', async () => {
+            // First, try to fetch from local bot web server endpoint
+            try {
+                const response = await fetch('/data');
+                if (response.ok) {
+                    allData = await response.json();
+                    setStatus("Live Server Data", false);
+                    initApp();
+                    return;
+                }
+            } catch (e) {
+                console.log("Local /data endpoint not available, trying URL parameter...");
+            }
+
+            // Fallback to URL Query Params
+            const urlParams = new URLSearchParams(window.location.search);
+            const rawData = urlParams.get('data');
+
+            if (rawData) {
+                try {
+                    const decodedData = decodeURIComponent(rawData);
+                    allData = JSON.parse(decodedData);
+                    setStatus("Live URL Data", false);
+                } catch (e) {
+                    console.error("Failed to parse data URL param, using mock data", e);
+                    allData = mockData;
+                    setStatus("Demo Data Mode", true);
+                }
+            } else {
+                allData = mockData;
+                setStatus("Demo Data Mode", true);
+            }
+
+            initApp();
+        });
+
+        function setStatus(text, isDemo) {
+            document.getElementById('statusText').innerText = text;
+            const dot = document.getElementById('statusDot');
+            if (isDemo) {
+                dot.className = 'status-dot demo';
+            } else {
+                dot.className = 'status-dot';
+            }
+        }
+
+        function initApp() {
+            // Clear current options first except default option
+            document.getElementById('provinceFilter').innerHTML = '<option value="">All Provinces</option>';
+            document.getElementById('districtFilter').innerHTML = '<option value="">All Districts</option>';
+            populateFilters();
+            filterData();
+        }
+
+        // Populate unique provinces
+        function populateFilters() {
+            const provinceFilter = document.getElementById('provinceFilter');
+            const provinces = [...new Set(allData.map(item => item.province).filter(Boolean))].sort();
+            
+            provinces.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.textContent = p;
+                provinceFilter.appendChild(opt);
+            });
+        }
+
+        // When province changes, update district filter list
+        function onProvinceChange() {
+            const provinceVal = document.getElementById('provinceFilter').value;
+            const districtFilter = document.getElementById('districtFilter');
+            
+            // Clear current options keeping "All Districts"
+            districtFilter.innerHTML = '<option value="">All Districts</option>';
+
+            if (provinceVal) {
+                const districts = [...new Set(
+                    allData
+                        .filter(item => item.province === provinceVal)
+                        .map(item => item.district)
+                        .filter(Boolean)
+                )].sort();
+
+                districts.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d;
+                    opt.textContent = d;
+                    districtFilter.appendChild(opt);
+                });
+            }
+            filterData();
+        }
+
+        // Filter and render
+        function filterData() {
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+            const provinceVal = document.getElementById('provinceFilter').value;
+            const districtVal = document.getElementById('districtFilter').value;
+
+            const filtered = allData.filter(item => {
+                // Text search matching
+                const matchesSearch = !searchVal || 
+                    (item.id && item.id.toLowerCase().includes(searchVal)) ||
+                    (item.store && item.store.toLowerCase().includes(searchVal)) ||
+                    (item.address && item.address.toLowerCase().includes(searchVal)) ||
+                    (item.province && item.province.toLowerCase().includes(searchVal)) ||
+                    (item.district && item.district.toLowerCase().includes(searchVal));
+
+                // Dropdown matching
+                const matchesProvince = !provinceVal || item.province === provinceVal;
+                const matchesDistrict = !districtVal || item.district === districtVal;
+
+                return matchesSearch && matchesProvince && matchesDistrict;
+            });
+
+            renderCards(filtered);
+        }
+
+        // Render HTML Cards
+        function renderCards(data) {
+            const listEl = document.getElementById('resultsList');
+            const countEl = document.getElementById('resultsCount');
+            
+            listEl.innerHTML = '';
+            countEl.textContent = `${data.length} items found`;
+
+            if (data.length === 0) {
+                listEl.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🪐</div>
+                        <p style="font-weight: 600;">No items matched your search</p>
+                        <p style="font-size: 0.8rem; opacity: 0.8;">Try filtering by another province or check your spelling.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            data.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'data-card';
+                card.innerHTML = `
+                    <div class="card-row">
+                        <span class="card-label">ID / Code</span>
+                        <span class="card-value" style="color: var(--primary-color); font-family: 'Outfit', monospace; font-size: 0.9rem;">${item.id || 'N/A'}</span>
+                    </div>
+                    <div class="card-row">
+                        <span class="card-label">Store</span>
+                        <span class="card-value">${item.store || 'N/A'}</span>
+                    </div>
+                    <div class="card-row">
+                        <span class="card-label">Location</span>
+                        <span class="card-value">${item.district || 'N/A'}, ${item.province || 'N/A'}</span>
+                    </div>
+                    <div class="card-address">
+                        <span class="card-label" style="font-size: 0.75rem;">Full Delivery Address:</span><br>
+                        <span style="font-weight: 500; font-size: 0.85rem;">${item.address || 'N/A'}</span>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        // Close app helper
+        function closeApp() {
+            tg.close();
+        }
+    </script>
+</body>
+</html>
