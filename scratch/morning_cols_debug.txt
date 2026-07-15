@@ -1,0 +1,48 @@
+
+==================== Sheet: Pickup ====================
+Row 01: PICKUP BILL CHECK — ALL BRANCHES, , , , , , , , , , , , , , , , , , , , , 
+Row 02: ZONE, POST OFFICE HANDLE, CURRENT POST OFFICE, ORDER ID, Cus name, Phone, June, , , , , , , , , , , , , , July, Grand Total
+Row 03: , , , , , , 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 13, 
+Row 04: Zone 1, PNPP001, PNPP001, 3003561963, Building Royal k plaza, 0716210471, , , , , , , , , , , , , 1, , , 1
+Row 05: Zone 1, PNPP001, PNPP001, 3003562118, Building Royal k plaza, 0716210471, , , , , , , , , , , , , 1, , , 1
+Row 06: Zone 1, PNPP014, PNPS006, 3003559918, Chan Nary, 0977175777, , , , , , , , , , , , , 1, , , 1
+Row 07: Zone 1, PNPP014, PNPS006, 3003562307, cho nana, 0715024838, , , , , , , , , , , , , 1, , , 1
+Row 08: Zone 1, PNPP014, PNPS006, 3003562563, Leang Liza, 0889904133, , , , , , , , , , , , , 1, , , 1
+Row 09: Zone 1, PNPP014, PNPS006, 3003563196, Hom sreypich, 0977162255, , , , , , , , , , , , , 1, , , 1
+Row 10: Zone 1, PNPS007, PNPS007, 3003553974, Tun Kimseang, 0714038607, , , , , , , , , , , , 1, , , , 1
+Row 11: Zone 1, PNPS007, PNPS007, 3003563018, ka ma, 0888566634, , , , , , , , , , , , , 1, , , 1
+Row 12: Zone 1, PNPS007, PNPS007, 3003563085, PHON THYDA, 0889561419, , , , , , , , , , , , , 1, , , 1
+Row 13: Zone 1, PNPS007, PNPS007, 3003563307, Vi von, 093516757, , , , , , , , , , , , , 1, , , 1
+Row 14: Zone 1, PNPS007, PNPS007, 3003563330, San Soaphea, 0884115900, , , , , , , , , , , , , 1, , , 1
+
+==================== Sheet: Delivery ====================
+Row 01: DELIVERY BILL CHECK — ALL BRANCHES, , , , , , , , , , , , , , , , , , , , 
+Row 02: ZONE, POST OFFICE HANDLE, CURRENT POST OFFICE, ORDER ID, RECEIVER, June, , , , , , , , , , , , , , July, Grand Total
+Row 03: , , , , , 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 13, 
+Row 04: Zone 1, KANP001, KANP001, 3003539130, 099838828 - ម៉ែ មុំ, , , , , , , , , , 1, , , , , , 1
+Row 05: Zone 1, KANP001, KANP001, 3003547618, 0883250502 - Nith barber, , , , , , , , , , , 1, , , , , 1
+Row 06: Zone 1, PNPP001, PNPP001, 3003559796, 069557776 - Abee brown, , , , , , , , , , , , , 1, , , 1
+Row 07: Zone 1, PNPP004, PNPP004, 3003554307, 0974685090 - ., , , , , , , , , , , , 1, , , , 1
+Row 08: Zone 1, PNPP004, PNPP004, 3003559985, 0974940421 - Srey oun, , , , , , , , , , , , , 1, , , 1
+Row 09: Zone 1, PNPP004, PNPP004, 3003560185, 098547558 - តា, , , , , , , , , , , , , 1, , , 1
+Row 10: Zone 1, PNPP004, PNPP004, 3003561274, 060787783 - Ji chin, , , , , , , , , , , , , 1, , , 1
+Row 11: Zone 1, PNPP004, PNPP004, 3003561441, 068624606 - Linh mit out, , , , , , , , , , , , , 1, , , 1
+Row 12: Zone 1, PNPP004, PNPP004, 3003562941, 0882125665 - Chhy, , , , , , , , , , , , , 1, , , 1
+Row 13: Zone 1, PNPP004, PNPP004, 3003565418, 0964657494 - 0964657494, , , , , , , , , , , , , 1, , , 1
+Row 14: Zone 1, PNPP005, PNPP005, 3003541730, 0969742401 - Fee lin, , , , , , , , , , , 1, , , , , 1
+
+==================== Sheet: Pending ====================
+Row 01: PENDING BILL CHECK — ALL BRANCHES, , , , , , , , , , , , , , , , , , , 
+Row 02: ZONE, CURRENT POST OFFICE, ORDER ID, REMARK, June, , , , , , , , , , , , , , July, Grand Total
+Row 03: , , , , 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 13, 
+Row 04: Zone 1, DVCZ3, 3003487018, Assign deliver (ចាត់តាំងអ្នកដឹក), 1, , , , , , , , , , , , , , , 1
+Row 05: Zone 1, DVCZ3, 3003525696, Assign deliver (ចាត់តាំងអ្នកដឹក), , , , , , , , 1, , , , , , , , 1
+Row 06: Zone 1, DVCZ4, 3003520596, Assign deliver (ចាត់តាំងអ្នកដឹក), , , , , , , 1, , , , , , , , , 1
+Row 07: Zone 1, DVCZ5, 3003505274, Assign deliver (ចាត់តាំងអ្នកដឹក), , , , , 1, , , , , , , , , , , 1
+Row 08: Zone 1, DVCZ5, 3003505396, Assign deliver (ចាត់តាំងអ្នកដឹក), , , , , 1, , , , , , , , , , , 1
+Row 09: Zone 1, KANP001, 3003565207, Accept handover (ទទួលការផ្ទេរ), , , , , , , , , , , , , 1, , , 1
+Row 10: Zone 1, KANP001, 3003565530, Accept handover (ទទួលការផ្ទេរ), , , , , , , , , , , , , 1, , , 1
+Row 11: Zone 1, KANP001, 3003565563, Accept handover (ទទួលការផ្ទេរ), , , , , , , , , , , , , 1, , , 1
+Row 12: Zone 1, KANP001, 3003565607, Accept handover (ទទួលការផ្ទេរ), , , , , , , , , , , , , 1, , , 1
+Row 13: Zone 1, KANP001, 3003566341, Accept handover (ទទួលការផ្ទេរ), , , , , , , , , , , , , 1, , , 1
+Row 14: Zone 1, KANP001, 3003567996, Handover truck (ផ្ទេរទៅឡានដឹក), , , , , , , , , , , , , , 1, , 1

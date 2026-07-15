@@ -15,7 +15,7 @@ MAX_INDEX = 6  # Pickup has most: ZONE, HANDLE, CURRENT PO, ORDER ID, Cus name, 
 REPORT_COLS = {
     'Pickup':   ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'Cus name', 'Phone'],
     'Delivery': ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'RECEIVER'],
-    'Pending':  ['ZONE', 'CURRENT POST OFFICE', 'ORDER ID', 'REMARK'],
+    'Pending':  ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'REMARK', 'NEXT_ACTION'],
 }
 
 REPORT_FILTER_COLS = {
@@ -27,9 +27,9 @@ REPORT_FILTER_COLS = {
 GAP_COLS = 1  # gap between side-by-side tables in wide mode
 
 # Fixed column widths (Excel units)
-W_DAY   = 4.5   # day columns e.g. "01","02"
+W_DAY   = 7.0   # day columns e.g. "01","02"
 W_ZONE  = 9.0   # ZONE
-W_GT    = 18.0  # Grand Total
+W_GT    = 20.0  # Grand Total
 W_MIN   = 8.0
 W_MAX   = 38.0
 
@@ -37,17 +37,27 @@ W_MAX   = 38.0
 HIGHLIGHT_OVER_DAYS = 1
 HIGHLIGHT_COLOR = 'FFEBEB'
 
-# Pending remark: classify WHY it's pending based on status code
 PENDING_REMARK_MAP = {
-    '306': 'Assign deliver',
-    '309': 'Assign deliver',
-    '311': 'Assign deliver',
-    '210': 'Handover Mega truck',
-    '300': 'Handover Mega truck',
-    '302': 'Handover Mega truck',
-    '310': 'Handover Mega truck',
-    '500': 'Handover Mega truck',
+    '306': 'Assign deliver (ចាត់តាំងអ្នកដឹក)',
+    '309': 'Assign deliver (ចាត់តាំងអ្នកដឹក)',
+    '311': 'Assign deliver (ចាត់តាំងអ្នកដឹក)',
+    '210': 'Handover truck (ផ្ទេរទៅឡានដឹក)',
+    '300': 'Accept handover (ទទួលការផ្ទេរ)',
+    '302': 'Accept handover (ទទួលការផ្ទេរ)',
+    '310': 'Handover truck (ផ្ទេរទៅឡានដឹក)',
+    '500': 'Handover truck (ផ្ទេរទៅឡានដឹក)',
 }
+
+
+def get_next_action(status_code):
+    sc = str(status_code).strip()
+    if sc in ('306', '309', '311'):
+        return 'ត្រូវចាត់ចែងអ្នកដឹក'
+    elif sc in ('300', '302'):
+        return 'ត្រូវស្កេនទទួលអីវ៉ាន់'
+    elif sc in ('210', '310', '500'):
+        return 'រង់ចាំឡានដឹកមកដល់'
+    return ''
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -199,12 +209,12 @@ def build_section_rows(df_h, index_cols, day_cols, date_col):
 
     if date_col and date_col in df.columns:
         parsed = pd.to_datetime(df[date_col], dayfirst=True, format='mixed', errors='coerce')
-        df['_day'] = parsed.dt.strftime('%d').fillna('')
+        df['_date'] = parsed.dt.date
     else:
-        df['_day'] = ''
+        df['_date'] = None
 
-    days_present = set(df['_day'].unique()) - {'', 'NaT', 'nan'}
-    active_days = [d for d in day_cols if d in days_present]
+    dates_present = set(df['_date'].dropna().unique())
+    active_days = [d for d in day_cols if d in dates_present]
 
     if not active_days:
         footer = {col: '' for col in index_cols}
@@ -213,7 +223,7 @@ def build_section_rows(df_h, index_cols, day_cols, date_col):
         return [footer], 0, []
 
     for d in active_days:
-        df[d] = (df['_day'] == d).astype(int)
+        df[d] = (df['_date'] == d).astype(int)
     df['Grand Total'] = 1
 
     agg = df.groupby(index_cols, sort=False, dropna=False)[active_days + ['Grand Total']].sum().reset_index()
@@ -251,12 +261,12 @@ def _border():
 
 # ── Table writer ───────────────────────────────────────────────────────────────
 
-def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active_days, dc, handle="", show_top_title=False, max_index=0, order_created_map=None):
+def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active_days, dc, handle="", show_top_title=False, max_index=0, order_created_map=None, order_status_map=None):
     """
     Write one report section at (start_row, start_col).
     Returns (next_free_row, next_free_col_after_block).
     """
-    fn     = dc.get('font_name',         'Aptos Narrow')
+    fn     = dc.get('font_name',         'Segoe UI')
     t_fg   = dc.get('title_color',       'FFFFFF')
     t_bg   = dc.get('title_fill_color',  '0F172A')
     h_bg   = dc.get('header_fill_color', '1E293B')
@@ -278,54 +288,75 @@ def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active
     n        = len(all_cols)
     end_col  = start_col + n - 1
 
-    # Row 1 — Title (Clean design: Dark background, White text)
+    # Row 1 — Title Row
     r = start_row
-    ws.row_dimensions[r].height = 22
-    tc = ws.cell(r, start_col, f"{report_name.upper()} BILL")
-    tc.font      = _font(fn, t_fg, bold=True, size=11)  # White title
-    tc.fill      = _fill(t_bg)                          # Dark background
-    tc.alignment = _align('left')
+    ws.row_dimensions[r].height = 24
+    title_text = f"{report_name.upper()} BILL CHECK — {handle}" if handle else f"{report_name.upper()} BILL CHECK"
+    tc = ws.cell(r, start_col, title_text)
+    tc.font      = _font(fn, t_fg, bold=True, size=11)
+    tc.fill      = _fill(t_bg)
+    tc.alignment = _align('center')
     tc.border    = bdr
-    
-    # Pre-style and empty the companion cells BEFORE merging so openpyxl doesn't raise a read-only error
-    if n > 1:
-        comp_cell = ws.cell(r, start_col + 1, "")
-        comp_cell.fill = _fill(t_bg)
-        comp_cell.border = bdr
-        
-    for ci in range(2, n):
-        c = ws.cell(r, start_col + ci, "")
-        c.fill = _fill(t_bg)
+    for ci in range(1, n):
+        c = ws.cell(r, start_col + ci, '')
+        c.fill   = _fill(t_bg)
         c.border = bdr
-
-    # Now merge the first two cells safely
     if n > 1:
-        ws.merge_cells(start_row=r, end_row=r, start_column=start_col, end_column=start_col + 1)
-
-    # Add red noted title and date to the right of the merged "PICKUP BILL" on top of the title bar
-    if n > 3 and show_top_title:
-        now_str = datetime.now().strftime('%d %B %Y')
-        rc = ws.cell(r, start_col + 2, f"DUE REPORT: {handle.upper()}" if handle else "DUE REPORT")
-        rc.font = _font(fn, 'FF8A8A', bold=True, size=11)
-        rc.fill = _fill(t_bg)
-        rc.alignment = _align('left')
-        
-        dc_cell = ws.cell(r, start_col + 3, f"DATE: {now_str}")
-        dc_cell.font = _font(fn, 'FF8A8A', bold=True, size=11)
-        dc_cell.fill = _fill(t_bg)
-        dc_cell.alignment = _align('left')
-
+        ws.merge_cells(start_row=r, end_row=r, start_column=start_col, end_column=start_col + n - 1)
     r += 1
 
-    # Row 2 — Headers
-    ws.row_dimensions[r].height = 22
+    # Row 2 — Month Row (merged per month group)
+    # Row 3 — Day Number Row
+    ws.row_dimensions[r].height = 20
+    ws.row_dimensions[r + 1].height = 20
+
+    # 1. Pre-fill and style all cells in both header rows
+    for ci in range(n):
+        col_idx = start_col + ci
+        for row_idx in (r, r + 1):
+            cell = ws.cell(row_idx, col_idx)
+            cell.fill = _fill(h_bg)
+            cell.font = _font(fn, h_fg, bold=True)
+            cell.alignment = _align('center')
+            cell.border = bdr
+
+    # 2. Vertically merge index columns and Grand Total column across both rows
     for ci, col_name in enumerate(all_cols):
-        c = ws.cell(r, start_col + ci, col_name)
-        c.font      = _font(fn, h_fg, bold=True)
-        c.fill      = _fill(h_bg)
-        c.alignment = _align('center')
-        c.border    = bdr
-    r += 1
+        col_idx = start_col + ci
+        is_index = (ci < len(padded_index))
+        is_gt = (ci == n - 1)
+        if is_index or is_gt:
+            ws.cell(r, col_idx, col_name)
+            ws.merge_cells(start_row=r, end_row=r + 1, start_column=col_idx, end_column=col_idx)
+
+    # 3. Write day numbers on Row r + 1 (day number row) for day columns
+    for ci in range(len(padded_index), n - 1):
+        col_idx = start_col + ci
+        col_name = all_cols[ci]  # datetime.date object
+        ws.cell(r + 1, col_idx, f"{col_name.day:02d}")
+
+    # 4. Group day columns by month and horizontally merge on Row r (month row)
+    month_groups = []
+    current_month = None
+    group_start = None
+    for ci in range(len(padded_index), n - 1):
+        col_name = all_cols[ci]
+        m_val = (col_name.year, col_name.month)
+        if m_val != current_month:
+            if current_month is not None:
+                month_groups.append((current_month, group_start, start_col + ci - 1))
+            current_month = m_val
+            group_start = start_col + ci
+    if current_month is not None:
+        month_groups.append((current_month, group_start, start_col + n - 2))
+
+    import calendar
+    for (yr, mo), start_c, end_c in month_groups:
+        ws.cell(r, start_c, calendar.month_name[mo])
+        if end_c > start_c:
+            ws.merge_cells(start_row=r, end_row=r, start_column=start_c, end_column=end_c)
+
+    r += 2
 
     # Data rows
     today = datetime.now().date()
@@ -335,26 +366,48 @@ def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active
         ws.row_dimensions[r].height = 20
         is_total = str(row_dict.get(index_cols[0], '')).strip() == 'Grand Total'
 
-        # Check if this row's order is over 2 days old
+        # Check overdue and status code
         is_overdue = False
-        if not is_total and order_created_map:
+        is_overdue_7days = False
+        status_code = None
+        if not is_total:
             order_id = normalize_id(row_dict.get('ORDER ID', ''))
-            created_date = order_created_map.get(order_id)
-            if created_date and (today - created_date).days > HIGHLIGHT_OVER_DAYS:
-                is_overdue = True
+            if order_created_map:
+                created_date = order_created_map.get(order_id)
+                if created_date:
+                    age_days = (today - created_date).days
+                    if age_days > HIGHLIGHT_OVER_DAYS:
+                        is_overdue = True
+                    if age_days > 7:
+                        is_overdue_7days = True
+            if order_status_map:
+                status_code = order_status_map.get(order_id)
 
         for ci, col_name in enumerate(all_cols):
             val  = row_dict.get(col_name, '')
             cell = ws.cell(r, start_col + ci, val if val != '' else None)
             cell.border = bdr
 
+            row_fill = None
             if is_total:
-                cell.fill      = _fill(tot_bg)
+                row_fill = _fill(tot_bg)
+            elif status_code in ("420", "472") and is_overdue_7days:
+                row_fill = _fill("FFEBEB")
+            elif status_code in ("420", "472"):
+                row_fill = _fill("E2EFDA")
+            elif is_overdue:
+                row_fill = _fill("FFEBEB")
+            elif status_code in ("500", "520", "540"):
+                row_fill = _fill("FCE4D6")
+
+            if is_total:
+                if row_fill:
+                    cell.fill = row_fill
                 cell.font      = _font(fn, RED, bold=True)
                 cell.alignment = _align('center')
-            elif is_overdue:
-                # Highlight entire row with light red for overdue orders
-                cell.fill      = highlight_fill
+            elif status_code in ("420", "472") or is_overdue or status_code in ("500", "520", "540"):
+                if row_fill:
+                    cell.fill = row_fill
                 cell.font      = _font(fn, '000000', bold=True)
                 cell.alignment = _align('center')
             elif col_name == index_cols[0]:
@@ -461,7 +514,7 @@ def _set_col_widths(ws):
 
 # ── Excel builders ─────────────────────────────────────────────────────────────
 
-def build_handle_excel(handle, sections, day_cols, dc, out_path, mode='wide', order_created_map=None):
+def build_handle_excel(handle, sections, day_cols, dc, out_path, mode='wide', order_created_map=None, order_status_map=None):
     """
     sections: list of (report_name, rows, total, index_cols, active_days)
     mode: 'wide' = side by side, 'long' = stacked
@@ -469,7 +522,7 @@ def build_handle_excel(handle, sections, day_cols, dc, out_path, mode='wide', or
     wb = Workbook()
     ws = wb.active
     ws.title = handle[:31]
-    fn  = dc.get('font_name', 'Aptos Narrow')
+    fn  = dc.get('font_name', 'Segoe UI')
 
     # Shared active days = union of all section active days, in sorted order
     shared_days = sorted(set(d for _, _, _, _, ad in sections for d in ad))
@@ -482,25 +535,26 @@ def build_handle_excel(handle, sections, day_cols, dc, out_path, mode='wide', or
         cur_col = 1
         for report_name, rows, total, index_cols, active_days in sections:
             _, next_col = _write_table(ws, 1, cur_col, report_name,
-                                       rows, index_cols, shared_days, dc, handle=handle, max_index=max_index, order_created_map=order_created_map)
+                                       rows, index_cols, shared_days, dc, handle=handle, max_index=max_index, order_created_map=order_created_map, order_status_map=order_status_map)
             cur_col = next_col + GAP_COLS
     else:
         # Long mode: Pickup → Delivery → Pending stacked
         r = 1
         for i, (report_name, rows, total, index_cols, active_days) in enumerate(sections):
             next_row, _ = _write_table(ws, r, 1, report_name,
-                                       rows, index_cols, shared_days, dc, handle=handle, show_top_title=(i==0), max_index=max_index, order_created_map=order_created_map)
+                                       rows, index_cols, shared_days, dc, handle=handle, show_top_title=(i==0), max_index=max_index, order_created_map=order_created_map, order_status_map=order_status_map)
             r = next_row + 1  # 1 blank row gap
 
     _set_col_widths(ws)
     wb.save(out_path)
 
 
-def build_final_excel(all_handle_sections, day_cols, dc, out_path, mode='wide', order_created_map=None):
+def build_final_excel(all_handle_sections, day_cols, dc, out_path, mode='wide', order_created_map=None, order_status_map=None):
+    from collections import defaultdict
     wb = Workbook()
-    ws = wb.active
-    ws.title = f"Report {datetime.now().strftime('%d.%m')}"
-
+    
+    report_types = ['Pickup', 'Delivery', 'Pending']
+    
     # Global shared days across ALL handles
     shared_days = sorted(set(
         d for _, sections in all_handle_sections
@@ -508,30 +562,68 @@ def build_final_excel(all_handle_sections, day_cols, dc, out_path, mode='wide', 
         for d in ad
     ))
 
-    # Compute total cols for merge using the widest index cols set across all sections
-    max_index = 3
-    for _, sections in all_handle_sections:
-        for _, _, _, ic, _ in sections:
-            max_index = max(max_index, len(ic))
-
-    cur_row = 1
+    # Collect all data rows (excluding branch total rows) for each report type
+    combined_data = defaultdict(list)
+    index_cols_map = {}
+    
     for handle, sections in all_handle_sections:
-        if mode == 'wide':
-            max_rows = max((len(rows) for _, rows, _, _, _ in sections), default=0)
-            cur_col  = 1
-            for report_name, rows, total, index_cols, active_days in sections:
-                _, next_col = _write_table(ws, cur_row, cur_col, report_name,
-                                           rows, index_cols, shared_days, dc, handle=handle, max_index=max_index, order_created_map=order_created_map)
-                cur_col = next_col + GAP_COLS
-            cur_row = cur_row + 2 + max_rows + 2
-        else:
-            for i, (report_name, rows, total, index_cols, active_days) in enumerate(sections):
-                next_row, _ = _write_table(ws, cur_row, 1, report_name,
-                                           rows, index_cols, shared_days, dc, handle=handle, show_top_title=(i==0), max_index=max_index, order_created_map=order_created_map)
-                cur_row = next_row + 1
-            cur_row += 1
+        for rn, rows, total, index_cols, active_days in sections:
+            index_cols_map[rn] = index_cols
+            non_footer_rows = [r for r in rows if r.get(index_cols[0]) != 'Grand Total']
+            combined_data[rn].extend(non_footer_rows)
 
-    _set_col_widths(ws)
+    for idx, rn in enumerate(report_types):
+        if idx == 0:
+            ws = wb.active
+            ws.title = rn
+        else:
+            ws = wb.create_sheet(title=rn)
+            
+        rows = combined_data[rn]
+        icols = index_cols_map.get(rn)
+        
+        if not icols:
+            icols = REPORT_COLS[rn]
+
+        if not rows:
+            footer = {col: '' for col in icols}
+            footer[icols[0]] = 'Grand Total'
+            footer['Grand Total'] = 0
+            rows = [footer]
+            combined_active_days = []
+        else:
+            # Sort the combined rows by post office handle & order ID
+            sort_keys = [c for c in ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID'] if c in icols]
+            def get_sort_key(row):
+                return tuple(str(row.get(k, '') or '').strip().upper() for k in sort_keys)
+            rows = sorted(rows, key=get_sort_key)
+            
+            combined_active_days = shared_days
+
+            # Compute column totals and Grand Total for the combined set
+            col_totals = defaultdict(int)
+            grand_total = 0
+            for row in rows:
+                grand_total += 1
+                for d in combined_active_days:
+                    val = row.get(d)
+                    if isinstance(val, (int, float)) and val != '':
+                        col_totals[d] += int(val)
+
+            # Build the global footer row
+            footer = {col: '' for col in icols}
+            footer[icols[0]] = 'Grand Total'
+            for d in combined_active_days:
+                footer[d] = col_totals[d] if col_totals[d] > 0 else ''
+            footer['Grand Total'] = grand_total
+            rows.append(footer)
+
+        _write_table(ws, 1, 1, rn, rows, icols, combined_active_days, dc,
+                     handle="ALL BRANCHES", show_top_title=False, max_index=len(icols),
+                     order_created_map=order_created_map, order_status_map=order_status_map)
+        
+        _set_col_widths(ws)
+        
     wb.save(out_path)
 
 
@@ -572,27 +664,33 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
     )
 
     order_created_map = {}
-    if date_col and 'ORDER ID' in df.columns:
-        parsed_created = pd.to_datetime(df[date_col], dayfirst=True, format='mixed', errors='coerce')
-        for order_id, dt in zip(df['ORDER ID'], parsed_created):
-            if pd.notna(dt):
-                order_created_map[normalize_id(order_id)] = dt.date()
+    order_status_map = {}
+    if 'ORDER ID' in df.columns:
+        if date_col:
+            parsed_created = pd.to_datetime(df[date_col], dayfirst=True, format='mixed', errors='coerce')
+            for order_id, dt in zip(df['ORDER ID'], parsed_created):
+                if pd.notna(dt):
+                    order_created_map[normalize_id(order_id)] = dt.date()
+        if 'CURRENT STATUS' in df.columns:
+            for order_id, status_val in zip(df['ORDER ID'], df['CURRENT STATUS']):
+                if pd.notna(order_id) and pd.notna(status_val):
+                    sc_val = str(status_val).strip()
+                    import re
+                    match = re.match(r'^(-?\d+)', sc_val)
+                    if match:
+                        order_status_map[normalize_id(order_id)] = match.group(1)
 
     today = datetime.now().date()
 
     # Build day_cols = only days that have data in the whole export, + today
     if date_col:
         parsed = pd.to_datetime(df[date_col], dayfirst=True, format='mixed', errors='coerce')
-        days_with_data = set(parsed.dropna().dt.strftime('%d').tolist())
+        dates_with_data = set(parsed.dropna().dt.date.tolist())
     else:
-        days_with_data = set()
+        dates_with_data = set()
 
-    today_str = today.strftime('%d')
-    # All days 01 → today, keep only those with data OR today
-    day_cols = [
-        f"{d:02d}" for d in range(1, today.day + 1)
-        if f"{d:02d}" in days_with_data or f"{d:02d}" == today_str
-    ]
+    dates_with_data.add(today)
+    day_cols = sorted(list(dates_with_data))
 
     # Exclude test orders
     test_col = next(
@@ -703,9 +801,9 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
         for sc in r.get("status_codes", []):
             status_map[str(sc).strip()] = label
 
-    # Globally drop completed statuses from all reports (Pickup, Delivery, Pending)
+    # Globally drop completed/done statuses from all reports (Pickup, Delivery, Pending)
     if 'STATUS_CODE' in dm.columns:
-        dm = dm[~dm['STATUS_CODE'].isin(['410', '201', '520'])].copy()
+        dm = dm[~dm['STATUS_CODE'].isin(['99', '100', '410', '201', '520'])].copy()
 
     # Filter per report type
     type_data = {}
@@ -728,7 +826,11 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
             def _pending_remark(row):
                 sc = str(row.get('STATUS_CODE', '')).strip()
                 return PENDING_REMARK_MAP.get(sc, 'Unknown')
+            def _pending_next_action(row):
+                sc = str(row.get('STATUS_CODE', '')).strip()
+                return get_next_action(sc)
             df_t['REMARK'] = df_t.apply(_pending_remark, axis=1)
+            df_t['NEXT_ACTION'] = df_t.apply(_pending_next_action, axis=1)
         type_data[rn] = df_t
 
     # Gather all handles
@@ -786,7 +888,7 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
         handle_files = []
         for rn, rows, total, icols, active_days in sections:
             tmp_xlsx = os.path.join(output_dir, f"Report_{handle}_{rn}_{today.strftime('%d_%m_%Y_%H%M%S')}.xlsx")
-            build_handle_excel(f"Report_{handle}_{rn}", [(rn, rows, total, icols, active_days)], day_cols, excel_design, tmp_xlsx, mode=mode, order_created_map=order_created_map)
+            build_handle_excel(f"Report_{handle}_{rn}", [(rn, rows, total, icols, active_days)], day_cols, excel_design, tmp_xlsx, mode=mode, order_created_map=order_created_map, order_status_map=order_status_map)
             handle_files.append({'path': tmp_xlsx, 'handle': handle})
 
         remark = (
@@ -805,7 +907,7 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
 
     final_xlsx = os.path.join(output_dir, f"Report_All_{today.strftime('%d_%m_%Y')}.xlsx")
     if all_handle_sections:
-        build_final_excel(all_handle_sections, day_cols, excel_design, final_xlsx, mode=mode, order_created_map=order_created_map)
+        build_final_excel(all_handle_sections, day_cols, excel_design, final_xlsx, mode=mode, order_created_map=order_created_map, order_status_map=order_status_map)
     else:
         wb = Workbook()
         wb.save(final_xlsx)
@@ -835,6 +937,7 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
         'type_data':       type_data,
         'day_cols':        day_cols,
         'cur_time_col':    date_col,
+        'order_status_map': order_status_map,
     }
     return result if return_metadata else [final_xlsx]
 

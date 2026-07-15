@@ -1,0 +1,11 @@
+=== REPORT COMPARISON: 9:00 AM vs 2:00 PM (July 13th, 2026) ===
+
+Morning File: c:\Users\DELL\Desktop\daily_push - Copy\test_out\Report_All_13_07_2026.xlsx
+Afternoon File: C:\Users\DELL\Downloads\Telegram Desktop\Report_All_13_07_2026 (7).xlsx
+
+| Category | Morning (9 AM) | Afternoon (2 PM) | Change | Change % |
+| :--- | :---: | :---: | :---: | :---: |
+| Pickup | 49 | 170 | +121 | +246.94% |
+| Delivery | 149 | 310 | +161 | +108.05% |
+| Pending | 748 | 0 | -748 | -100.00% |
+| **Total** | **946** | **480** | **-466** | **-49.26%** |

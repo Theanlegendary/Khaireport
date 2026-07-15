@@ -1,0 +1,69 @@
+All unique keys in response:
+[
+  "branch",
+  "branch_code",
+  "branch_createdAt",
+  "branch_createdBy",
+  "branch_departmentId",
+  "branch_enUsName",
+  "branch_hpoUsername",
+  "branch_kmKhmName",
+  "branch_level",
+  "branch_loLaoName",
+  "branch_myMmName",
+  "branch_name",
+  "branch_parentDepartmentCode",
+  "branch_parentDepartmentId",
+  "branch_path",
+  "branch_phone",
+  "branch_pomUsername",
+  "branch_status",
+  "branch_type",
+  "branch_updatedBy",
+  "branch_viVnName",
+  "code",
+  "createdAt",
+  "createdBy",
+  "departmentId",
+  "enUsName",
+  "hpoUserId",
+  "hpoUsername",
+  "kmKhmName",
+  "level",
+  "loLaoName",
+  "myMmName",
+  "name",
+  "parentDepartmentCode",
+  "parentDepartmentId",
+  "path",
+  "phone",
+  "pomUsername",
+  "status",
+  "statusLabel",
+  "type",
+  "typeLabel",
+  "updatedAt",
+  "updatedBy",
+  "viVnName"
+]
+
+Matching keys: ['branch_myMmName', 'createdBy', 'branch_type', 'type', 'myMmName', 'branch_updatedBy', 'updatedBy', 'typeLabel', 'branch_createdBy']
+
+Item 1 (PNPA001):
+  myMmName: PNPA001 - Prey Sa
+  type: AGENT
+  createdBy: 436236
+  updatedBy: 
+  typeLabel: Authorized Dealer/ Authorized Agent
+Item 2 (PNPA002):
+  myMmName: PNPA002 - Oulampik 01
+  type: AGENT
+  createdBy: thienpd
+  updatedBy: 436236
+  typeLabel: Authorized Dealer/ Authorized Agent
+Item 3 (PNPA003):
+  myMmName: PNPA003 - Tuek Thla 01
+  type: AGENT
+  createdBy: thienpd
+  updatedBy: 
+  typeLabel: Authorized Dealer/ Authorized Agent

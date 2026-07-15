@@ -1,0 +1,39 @@
+Row 01: PICKUP BILL CHECK  13.07_14h33  — ALL BRANCHES, , , , , , , , , , , , , , , , , , , , 
+Row 02: ZONE, POST OFFICE HANDLE, CURRENT POST OFFICE, ORDER ID, Cus name, Phone, June, July, , , , , , , , , , , , , Grand Total
+Row 03: , , , , , , 30, 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 
+Row 04: Zone 3, BANP001, BANA011, 3103761108, ផែង វណ្ណនី, 066824778, , , , , , , , , , , , , , 1, 1
+Row 05: Zone 3, BANP001, BANP001, 3103761320, Chheat, 066325633, , , , , , , , , , , , , , 1, 1
+Row 06: Zone 3, BANP001, BANP001, 3103761364, ជីសរីរាងធម្មជាតិ, 066325633, , , , , , , , , , , , , , 1, 1
+Row 07: Zone 3, BANP001, BANP001, 3103761386, Chheat, 066325633, , , , , , , , , , , , , , 1, 1
+Row 08: Zone 3, BATA034, BATA034, 3103660386, ណន សុជាតា, 0715981154, , , 1, , , , , , , , , , , , 1
+Row 09: Zone 3, BATA034, BATA034, 3103660453, Neang Vong Vattanak, 0886536143, , , 1, , , , , , , , , , , , 1
+Row 10: Zone 3, BATA034, BATA034, 3103660486, Neang Vong Vattanak, 0886536143, , , 1, , , , , , , , , , , , 1
+Row 11: Zone 3, BATA041, BATA041, 3103660408, Neang Vong Vattanak, 0886536143, , , 1, , , , , , , , , , , , 1
+Row 12: Zone 3, BATP001, BATP001, 3103682508, Thorng, 0888802871, , , , , 1, , , , , , , , , , 1
+Row 13: Zone 3, BATP001, BATP001, 3103752208, Uk langdy, 0966652226, , , , , , , , , , , , , 1, , 1
+Row 14: Zone 3, BATP001, BATP001, 3103752219, Uk langdy, 0966652226, , , , , , , , , , , , , 1, , 1
+Row 15: Zone 3, BATP001, BATP001, 3103752220, Uk langdy, 0966652226, , , , , , , , , , , , , 1, , 1
+Row 16: Zone 3, BATP001, BATP001, 3103753097, Khouch, 0976514595, , , , , , , , , , , , , 1, , 1
+Row 17: Zone 3, BATP001, BATP001, 3103753253, Khouch, 0976514595, , , , , , , , , , , , , 1, , 1
+Row 18: Zone 3, BATP001, BATP001, 3103753364, Uk langdy, 0966652226, , , , , , , , , , , , , 1, , 1
+Row 19: Zone 3, BATP001, BATP001, 3103760720, Khouch, 0976514595, , , , , , , , , , , , , , 1, 1
+Row 20: Zone 5, CHAP001, CHAP001, 3103758619, Chi Sreychea, 0962335324, , , , , , , , , , , , , 1, , 1
+Row 21: Zone 3, CHHP001, CHHA009, 3103739742, ជាសុ រា៉នី, 0978714268, , , , , , , , , , , 1, , , , 1
+Row 22: Zone 3, CHHP001, CHHA009, 3103740775, ជាសុរា៉មុន្ធី, 0978714268, , , , , , , , , , , , 1, , , 1
+Row 23: Zone 3, CHHP001, CHHA009, 3103741408, ចយ ឌន, 0885716058, , , , , , , , , , , , 1, , , 1
+Row 24: Zone 3, CHHP001, CHHA009, 3103741442, ចយ ឌន, 0885716058, , , , , , , , , , , , 1, , , 1
+Row 25: Zone 3, CHHP001, CHHA009, 3103751242, ហុន សុធា, 068217778, , , , , , , , , , , , , 1, , 1
+Row 26: Zone 3, CHHP001, CHHA009, 3103758842, Nhoek, 066274777, , , , , , , , , , , , , , 1, 1
+Row 27: Zone 3, CHHP001, CHHP001, 3103752397, Long Veasna, 0888999585, , , , , , , , , , , , , 1, , 1
+Row 28: Zone 3, CHHP001, CHHP001, 3103759353, Nob MengHong, 0973266105, , , , , , , , , , , , , , 1, 1
+Row 29: Zone 3, CHHP001, CHHP001, 3103759531, Nob MengHong, 0973266105, , , , , , , , , , , , , , 1, 1
+Row 30: Zone 3, CHHP001, CHHP001, 3103759564, Nob MengHong, 0973266105, , , , , , , , , , , , , , 1, 1
+Row 31: Zone 3, CHHP001, CHHP001, 3103759708, Nob MengHong, 0973266105, , , , , , , , , , , , , , 1, 1
+Row 32: Zone 3, CHHP001, CHHP001, 3103759753, Nob MengHong, 0973266105, , , , , , , , , , , , , , 1, 1
+Row 33: Zone 3, CHHP001, CHHP001, 3103760931, Nob MengHong, 0973266105, , , , , , , , , , , , , , 1, 1
+Row 34: Zone 2, KAMP001, SPEA006, 3103760431, SOK LA, 0883227866, , , , , , , , , , , , , , 1, 1
+Row 35: Zone 1, KANP001, KANA004, 3103750842, BA KHIM, 060875488, , , , , , , , , , , , 1, , , 1
+Row 36: Zone 1, KANP001, KANP001, 3103753919, Ornzizanda, 077545311, , , , , , , , , , , , , 1, , 1
+Row 37: Zone 5, KRAP001, KRAS002, 3103757986, sajib hossen, 0974846063, , , , , , , , , , , , , 1, , 1
+Row 38: Zone 1, PNPP003, PNPP003, 3103730053, Daravong, 0976768899, , , , , , , , , , , 1, , , , 1
+Row 39: Zone 1, PNPP004, PNPP004, 3103708508, Nguyen Van khien, 0889797979, , , , , , , , , 1, , , , , , 1

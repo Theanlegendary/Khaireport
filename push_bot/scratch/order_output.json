@@ -1,0 +1,1298 @@
+{
+  "search_status_code": 200,
+  "search_data": {
+    "tenant_id": 2,
+    "id": "25dab8a2-f5b4-41b4-8713-d114114d1bfc",
+    "order_code": "3003488041",
+    "order_name": "អាវ",
+    "order_status": 512,
+    "order_created_date": 1781434789013,
+    "warehouse_id": "8d13f384-9916-47ca-9cdc-5e961825f909",
+    "post_code": "PNPP011",
+    "delivery_post_code": "PNPP008",
+    "route_id": "",
+    "product_convert_weight": 1225.0,
+    "calculated_weight": 1225.0,
+    "service_code": "CCN",
+    "service_name": "Express",
+    "added_service_code": "VTT, GCH",
+    "cod_money": 0.0,
+    "total_fees": 1.3,
+    "total_tax": 0.15,
+    "payer_type": "SELLER",
+    "shipper": {
+      "id": 35690,
+      "name": "សុខ ច័ន្ទថាវី",
+      "phone": "0977383467",
+      "postOffice": "PNPP011",
+      "owner": 47012,
+      "address": {
+        "components": [
+          {
+            "id": null,
+            "code": null,
+            "level": 999,
+            "type": null,
+            "name": "ភូមិខ្វា (Khvar Village)"
+          },
+          {
+            "id": "5025982",
+            "code": "120501",
+            "level": 3,
+            "type": "VILLAGE",
+            "name": "Dangkao"
+          },
+          {
+            "id": "4059556",
+            "code": "1205",
+            "level": 2,
+            "type": "DISTRICT",
+            "name": "Dangkao"
+          },
+          {
+            "id": "4025120",
+            "code": "PNP",
+            "level": 1,
+            "type": "PROVINCE",
+            "name": "Phnom Penh"
+          },
+          {
+            "id": null,
+            "code": "KH",
+            "level": 0,
+            "type": null,
+            "name": "Cambodia"
+          }
+        ],
+        "formattedAddress": "ភូមិខ្វា (Khvar Village) - Dangkao - Dangkao - Phnom Penh - Cambodia"
+      }
+    },
+    "consignee": {
+      "name": "Sok la",
+      "phone": "+855967870384",
+      "owner": 75286,
+      "address": {
+        "components": [
+          {
+            "id": null,
+            "code": null,
+            "level": 999,
+            "type": "OTHER",
+            "name": "Delivery"
+          },
+          {
+            "id": "5026016",
+            "code": "120914",
+            "level": 3,
+            "type": "VILLAGE",
+            "name": "Kakab Ti Muoy"
+          },
+          {
+            "id": "4059560",
+            "code": "1209",
+            "level": 2,
+            "type": "DISTRICT",
+            "name": "Pou Saen Chey"
+          },
+          {
+            "id": "4025120",
+            "code": "PNP",
+            "level": 1,
+            "type": "PROVINCE",
+            "name": "Phnom Penh"
+          },
+          {
+            "id": null,
+            "code": "KH",
+            "level": 0,
+            "type": null,
+            "name": "Cambodia"
+          }
+        ],
+        "formattedAddress": "Delivery - Kakab Ti Muoy - Pou Saen Chey - Phnom Penh - Cambodia"
+      }
+    },
+    "parcel": {
+      "description": "",
+      "length": 35.0,
+      "width": 25.0,
+      "height": 7.0,
+      "weight": 800.0,
+      "convertedWeight": 1225.0,
+      "perimeter": 67.0,
+      "measurementUnit": "CENTIMET",
+      "type": "GOODS",
+      "weightUnit": "GRAM",
+      "items": [
+        {
+          "name": "អាវ",
+          "value": 10.0,
+          "weight": 800.0,
+          "quantity": 1
+        }
+      ],
+      "photos": []
+    },
+    "owner": 47012,
+    "transaction_id": "25c7b3ab-c3fc-4e19-9f95-97d7b73fc733",
+    "version": 35,
+    "postman": {
+      "id": "278",
+      "code": "ne300011",
+      "name": "ne300011",
+      "full_name": "Meang Menglong",
+      "phone": "0714804613"
+    },
+    "created_at": 1781409589282,
+    "updated_at": 1782227515804,
+    "updated_by": {
+      "id": "278",
+      "code": "ne300011",
+      "name": "ne300011",
+      "full_name": "Meang Menglong",
+      "phone": "0714804613"
+    },
+    "source": 0,
+    "source_name": "APP - OMS",
+    "order_scope": "DOMESTIC",
+    "is_same_province": true
+  },
+  "track_status_code": 200,
+  "track_data": {
+    "uri": "",
+    "numberOfRetries": 0,
+    "orderNo": "",
+    "trackingTrips": [
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Meang Menglong",
+          "phone": "0714804613",
+          "id": "278"
+        },
+        "updatedAt": "2026-06-23T15:11:56.700+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP011",
+        "postcode": "PNPP011",
+        "postmanDelivery": {
+          "name": "Meang Menglong",
+          "phone": "0714804613",
+          "id": "278"
+        },
+        "postman": {
+          "name": "Meang Menglong",
+          "phone": "0714804613",
+          "id": "278"
+        },
+        "status": "S512",
+        "statusName": "RETURNING",
+        "actorType": "SYSTEM",
+        "itemType": "RETURNING_ADDRESS",
+        "desc": "Being returned.",
+        "sort": {
+          "lsn": 1782202315753
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Meang Menglong",
+          "phone": "0714804613"
+        },
+        "updatedAt": "2026-06-23T15:11:45.923+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP011",
+        "postcode": "PNPP011",
+        "postOffice": {
+          "postcode": "PNPP011",
+          "name": "PNPP011 - Dangkao",
+          "phone": "0883331768"
+        },
+        "status": "S311",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "MANUAL_RECEIVE",
+        "desc": "Confirm arrival at facility PNPP011",
+        "sort": {
+          "lsn": 1782202306003
+        },
+        "packageTransiting": {
+          "code": "3003488041"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Pich Tola",
+          "phone": "0979031016"
+        },
+        "updatedAt": "2026-06-20T18:45:13.450+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postOffice": {
+          "postcode": "PNPP008",
+          "name": "PNPP008 - Pou Saen Chey 01",
+          "phone": "0977872172"
+        },
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office DVCMEGA1",
+        "sort": {
+          "lsn": 1781955913524
+        },
+        "plateNumber": "2CL2271",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "PNPP008"
+          },
+          "handoverPointCreation": {
+            "code": "DVCMEGA1"
+          },
+          "handoverStaff": {
+            "code": "coc868522"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300056"
+          },
+          "driverName": "Ny Veha",
+          "tripCode": "CX000436486",
+          "driverPhone": "855714762669",
+          "vehiclePlate": "2CL2271",
+          "departmentCode": "PNPP008"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Ny Veha",
+          "phone": "0714762669"
+        },
+        "updatedAt": "2026-06-20T13:32:49.903+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "DVCMEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office MEGA1",
+        "sort": {
+          "lsn": 1781937170140
+        },
+        "plateNumber": "2CL2271",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "DVCMEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "MEGA1"
+          },
+          "handoverStaff": {
+            "code": "vtc712220"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300056"
+          },
+          "driverName": "Ny Veha",
+          "tripCode": "CX000436486",
+          "driverPhone": "855714762669",
+          "vehiclePlate": "2CL2271",
+          "departmentCode": "DVCMEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-20T13:25:21.549+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S302",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_ASSIGN_ORDER",
+        "desc": "Complete the sack PKG_419632_MEGA1",
+        "sort": {
+          "lsn": 1781936721569
+        },
+        "packageTransiting": {
+          "code": "PKG_419632_MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-20T13:25:19.227+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S300",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING",
+        "desc": "Put the order in the sack PKG_419632_MEGA1 with note .",
+        "sort": {
+          "lsn": 1781936719228
+        },
+        "packageTransiting": {
+          "code": "PKG_419632_MEGA1",
+          "note": ""
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-20T13:25:04.645+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP011",
+        "postcode": "MEGA1",
+        "status": "S311",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "MANUAL_RECEIVE",
+        "desc": "Confirm arrival at facility MEGA1",
+        "sort": {
+          "lsn": 1781936704666
+        },
+        "packageTransiting": {
+          "code": "3003488041"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Phally Socheata",
+          "phone": "0714394233"
+        },
+        "updatedAt": "2026-06-20T13:18:03.399+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP011",
+        "postcode": "MEGA1",
+        "status": "S311",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "MANUAL_RECEIVE",
+        "desc": "Confirm arrival at facility MEGA1",
+        "sort": {
+          "lsn": 1781936283476
+        },
+        "packageTransiting": {
+          "code": "3003488041"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Phally Socheata",
+          "phone": "0714394233"
+        },
+        "updatedAt": "2026-06-20T13:09:07.059+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP009",
+        "postcode": "MEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office DVCMEGA1",
+        "sort": {
+          "lsn": 1781935747061
+        },
+        "plateNumber": "2CL2271",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "MEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "DVCMEGA1"
+          },
+          "handoverStaff": {
+            "code": "ne300090"
+          },
+          "handoverStaffCreation": {
+            "code": "coc868522"
+          },
+          "driverName": "Ny Veha",
+          "tripCode": "CX000436485",
+          "driverPhone": "855714762669",
+          "vehiclePlate": "2CL2271",
+          "departmentCode": "MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Ny Veha",
+          "phone": "0714762669"
+        },
+        "updatedAt": "2026-06-20T12:47:43.012+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP009",
+        "postcode": "DVCMEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office PNPP008",
+        "sort": {
+          "lsn": 1781934463014
+        },
+        "plateNumber": "2CL2271",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "DVCMEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "PNPP008"
+          },
+          "handoverStaff": {
+            "code": "vtc712220"
+          },
+          "handoverStaffCreation": {
+            "code": "coc868522"
+          },
+          "driverName": "Ny Veha",
+          "tripCode": "CX000436485",
+          "driverPhone": "855714762669",
+          "vehiclePlate": "2CL2271",
+          "departmentCode": "DVCMEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Pich Tola",
+          "phone": "0979031016"
+        },
+        "updatedAt": "2026-06-20T12:46:55.823+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP009",
+        "postcode": "PNPP008",
+        "postOffice": {
+          "postcode": "PNPP008",
+          "name": "PNPP008 - Pou Saen Chey 01",
+          "phone": "0977872172"
+        },
+        "status": "S302",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_ASSIGN_ORDER",
+        "desc": "Complete the sack PKG_419611_PNPP008",
+        "sort": {
+          "lsn": 1781934415825
+        },
+        "packageTransiting": {
+          "code": "PKG_419611_PNPP008"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Pich Tola",
+          "phone": "0979031016"
+        },
+        "updatedAt": "2026-06-20T12:46:38.174+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP009",
+        "postcode": "PNPP008",
+        "postOffice": {
+          "postcode": "PNPP008",
+          "name": "PNPP008 - Pou Saen Chey 01",
+          "phone": "0977872172"
+        },
+        "status": "S300",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING",
+        "desc": "Put the order in the sack PKG_419611_PNPP008 with note .",
+        "sort": {
+          "lsn": 1781934398175
+        },
+        "packageTransiting": {
+          "code": "PKG_419611_PNPP008",
+          "note": ""
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Khom Sophea",
+          "phone": "0977872172",
+          "id": "201"
+        },
+        "updatedAt": "2026-06-20T08:24:31.429+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP011",
+        "postcode": "PNPP008",
+        "postOffice": {
+          "postcode": "PNPP011",
+          "name": "PNPP011 - Dangkao",
+          "phone": "0883331768"
+        },
+        "postmanDelivery": {
+          "name": "Khom Sophea",
+          "phone": "0977872172",
+          "id": "201"
+        },
+        "postman": {
+          "name": "Khom Sophea",
+          "phone": "0977872172",
+          "id": "201"
+        },
+        "status": "S500",
+        "statusName": "SHIPPER_RETURN",
+        "actorType": "SYSTEM",
+        "itemType": "SHIPPER_RETURN",
+        "desc": "Returning to PNPP011 - PNPP011 - Dangkao.",
+        "sort": {
+          "lsn": 1781918671529
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Khom Sophea",
+          "phone": "0977872172",
+          "id": "201"
+        },
+        "updatedAt": "2026-06-20T08:24:09.504+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postmanDelivery": {
+          "name": "Khom Sophea",
+          "phone": "0977872172",
+          "id": "201"
+        },
+        "postman": {
+          "name": "Khom Sophea",
+          "phone": "0977872172",
+          "id": "201"
+        },
+        "status": "S460",
+        "statusName": "RETURN_REQUEST",
+        "actorType": "SYSTEM",
+        "itemType": "RETURN_REQUEST",
+        "desc": "Return request due to  Recipient refused to receive/ Already bought ",
+        "sort": {
+          "lsn": 1781918648548
+        },
+        "returnReason": "Recipient refused to receive/ Already bought "
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "updatedAt": "2026-06-18T18:42:16.390+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postmanDelivery": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "postman": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "status": "S460",
+        "statusName": "RETURN_REQUEST",
+        "actorType": "SYSTEM",
+        "itemType": "RETURN_REQUEST",
+        "desc": "Return request due to  Recipient refused to receive/ Already bought ",
+        "sort": {
+          "lsn": 1781782936429
+        },
+        "returnReason": "Recipient refused to receive/ Already bought "
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "updatedAt": "2026-06-18T18:32:49.962+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postmanDelivery": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "postman": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "status": "S460",
+        "statusName": "RETURN_REQUEST",
+        "actorType": "SYSTEM",
+        "itemType": "RETURN_REQUEST",
+        "desc": "Return request due to  Recipient refused to receive/ Already bought ",
+        "sort": {
+          "lsn": 1781782369999
+        },
+        "returnReason": "Recipient refused to receive/ Already bought "
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "updatedAt": "2026-06-18T13:40:02.228+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postmanDelivery": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "postman": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "status": "S460",
+        "statusName": "RETURN_REQUEST",
+        "actorType": "SYSTEM",
+        "itemType": "RETURN_REQUEST",
+        "desc": "Return request due to  Recipient refused to receive/ Already bought ",
+        "sort": {
+          "lsn": 1781764802270
+        },
+        "returnReason": "Recipient refused to receive/ Already bought "
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "updatedAt": "2026-06-18T13:39:24.746+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postmanDelivery": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790",
+          "id": "285"
+        },
+        "deliveredAt": "2026-06-18T20:39:24.746+07:00",
+        "status": "S402",
+        "statusName": "SHIPPING",
+        "actorType": "SYSTEM",
+        "itemType": "ASSIGN_CONFIRM",
+        "desc": "Out for delivery",
+        "sort": {
+          "lsn": 1781764763789
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790"
+        },
+        "updatedAt": "2026-06-15T12:39:56.227+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postOffice": {
+          "postcode": "PNPP008",
+          "name": "PNPP008 - Pou Saen Chey 01",
+          "phone": "0977872172"
+        },
+        "status": "S309",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_RECEIVE_PARCEL",
+        "desc": "Exploited",
+        "sort": {
+          "lsn": 1781501997297
+        },
+        "packageTransiting": {
+          "code": "PKG_416352_MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Men Chhorvyvannsokhathiny y",
+          "phone": "066220790"
+        },
+        "updatedAt": "2026-06-15T12:35:49.232+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP008",
+        "postOffice": {
+          "postcode": "PNPP008",
+          "name": "PNPP008 - Pou Saen Chey 01",
+          "phone": "0977872172"
+        },
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office DVCMEGA1",
+        "sort": {
+          "lsn": 1781501750106
+        },
+        "plateNumber": "2CL2381",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "PNPP008"
+          },
+          "handoverPointCreation": {
+            "code": "DVCMEGA1"
+          },
+          "handoverStaff": {
+            "code": "ne300004"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300056"
+          },
+          "driverName": "Touch Pisey",
+          "tripCode": "CX000436373",
+          "driverPhone": "855969995699",
+          "vehiclePlate": "2CL2381",
+          "departmentCode": "PNPP008"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Touch Pisey",
+          "phone": "0969995699"
+        },
+        "updatedAt": "2026-06-15T07:01:31.673+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "DVCMEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office MEGA1",
+        "sort": {
+          "lsn": 1781481691688
+        },
+        "plateNumber": "2CL2381",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "DVCMEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "MEGA1"
+          },
+          "handoverStaff": {
+            "code": "vtc712223"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300056"
+          },
+          "driverName": "Touch Pisey",
+          "tripCode": "CX000436373",
+          "driverPhone": "855969995699",
+          "vehiclePlate": "2CL2381",
+          "departmentCode": "DVCMEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-14T21:50:54.613+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S302",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_ASSIGN_ORDER",
+        "desc": "Complete the sack PKG_416352_MEGA1",
+        "sort": {
+          "lsn": 1781448654632
+        },
+        "packageTransiting": {
+          "code": "PKG_416352_MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-14T21:50:46.334+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S300",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING",
+        "desc": "Put the order in the sack PKG_416352_MEGA1 with note .",
+        "sort": {
+          "lsn": 1781448646335
+        },
+        "packageTransiting": {
+          "code": "PKG_416352_MEGA1",
+          "note": ""
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-14T21:02:13.068+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S311",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "MANUAL_RECEIVE",
+        "desc": "Confirm arrival at facility MEGA1",
+        "sort": {
+          "lsn": 1781445733090
+        },
+        "packageTransiting": {
+          "code": "3003488041"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-14T21:02:11.026+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S311",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "MANUAL_RECEIVE",
+        "desc": "Confirm arrival at facility MEGA1",
+        "sort": {
+          "lsn": 1781445731115
+        },
+        "packageTransiting": {
+          "code": "3003488041"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Jorn Rajame",
+          "phone": "0717054336"
+        },
+        "updatedAt": "2026-06-14T20:50:17.617+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office DVCMEGA1",
+        "sort": {
+          "lsn": 1781445017622
+        },
+        "plateNumber": "2CL2381",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "MEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "DVCMEGA1"
+          },
+          "handoverStaff": {
+            "code": "ne300056"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300085"
+          },
+          "driverName": "Phon Vuthi",
+          "tripCode": "CX000436355",
+          "driverPhone": "855975660731",
+          "vehiclePlate": "2CL2381",
+          "departmentCode": "MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Phon Vuthi",
+          "phone": "0975660731"
+        },
+        "updatedAt": "2026-06-14T15:55:44.503+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "DVCMEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office MEGA1",
+        "sort": {
+          "lsn": 1781427344505
+        },
+        "plateNumber": "2CL2381",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "DVCMEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "MEGA1"
+          },
+          "handoverStaff": {
+            "code": "coc867327"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300085"
+          },
+          "driverName": "Phon Vuthi",
+          "tripCode": "CX000436355",
+          "driverPhone": "855975660731",
+          "vehiclePlate": "2CL2381",
+          "departmentCode": "DVCMEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Sokuntheary Chey",
+          "phone": "068620016"
+        },
+        "updatedAt": "2026-06-14T15:53:36.313+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S302",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_ASSIGN_ORDER",
+        "desc": "Complete the sack PKG_416242_MEGA1",
+        "sort": {
+          "lsn": 1781427216315
+        },
+        "packageTransiting": {
+          "code": "PKG_416242_MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Sokuntheary Chey",
+          "phone": "068620016"
+        },
+        "updatedAt": "2026-06-14T15:53:29.539+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S300",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING",
+        "desc": "Put the order in the sack PKG_416242_MEGA1 with note .",
+        "sort": {
+          "lsn": 1781427209540
+        },
+        "packageTransiting": {
+          "code": "PKG_416242_MEGA1",
+          "note": ""
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Sokuntheary Chey",
+          "phone": "068620016"
+        },
+        "updatedAt": "2026-06-14T15:52:35.407+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S311",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "MANUAL_RECEIVE",
+        "desc": "Confirm arrival at facility MEGA1",
+        "sort": {
+          "lsn": 1781427155486
+        },
+        "packageTransiting": {
+          "code": "3003488041"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Sokuntheary Chey",
+          "phone": "068620016"
+        },
+        "updatedAt": "2026-06-14T15:25:00.510+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "MEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office DVCMEGA1",
+        "sort": {
+          "lsn": 1781425500511
+        },
+        "plateNumber": "2CL2381",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "MEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "DVCMEGA1"
+          },
+          "handoverStaff": {
+            "code": "ne300085"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300011"
+          },
+          "driverName": "Phon Vuthi",
+          "tripCode": "CX000436353",
+          "driverPhone": "855975660731",
+          "vehiclePlate": "2CL2381",
+          "departmentCode": "MEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Phon Vuthi",
+          "phone": "0975660731"
+        },
+        "updatedAt": "2026-06-14T11:53:29.330+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "DVCMEGA1",
+        "status": "S306",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_CAR_RECEIVE_HANDOVER",
+        "desc": "Receive handover from post office PNPP011",
+        "sort": {
+          "lsn": 1781412809332
+        },
+        "plateNumber": "2CL2381",
+        "packageTransiting": {},
+        "handoverInfo": {
+          "handoverPoint": {
+            "code": "DVCMEGA1"
+          },
+          "handoverPointCreation": {
+            "code": "PNPP011"
+          },
+          "handoverStaff": {
+            "code": "coc867327"
+          },
+          "handoverStaffCreation": {
+            "code": "ne300011"
+          },
+          "driverName": "Phon Vuthi",
+          "tripCode": "CX000436353",
+          "driverPhone": "855975660731",
+          "vehiclePlate": "2CL2381",
+          "departmentCode": "DVCMEGA1"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Meang Menglong",
+          "phone": "0714804613"
+        },
+        "updatedAt": "2026-06-14T11:19:40.689+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP011",
+        "postOffice": {
+          "postcode": "PNPP011",
+          "name": "PNPP011 - Dangkao",
+          "phone": "0883331768"
+        },
+        "status": "S302",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING_ASSIGN_ORDER",
+        "desc": "Complete the sack PKG_416176_PNPP011",
+        "sort": {
+          "lsn": 1781410780691
+        },
+        "packageTransiting": {
+          "code": "PKG_416176_PNPP011"
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Meang Menglong",
+          "phone": "0714804613"
+        },
+        "updatedAt": "2026-06-14T11:19:33.566+07:00",
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP011",
+        "postOffice": {
+          "postcode": "PNPP011",
+          "name": "PNPP011 - Dangkao",
+          "phone": "0883331768"
+        },
+        "status": "S300",
+        "statusName": "TRANSITING",
+        "actorType": "SYSTEM",
+        "itemType": "TRANSITING",
+        "desc": "Put the order in the sack PKG_416176_PNPP011 with note .",
+        "sort": {
+          "lsn": 1781410773568
+        },
+        "packageTransiting": {
+          "code": "PKG_416176_PNPP011",
+          "note": ""
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "Meang Menglong",
+          "phone": "0714804613",
+          "id": "278"
+        },
+        "updatedAt": "2026-06-14T11:15:19.442+07:00",
+        "service": "CCN",
+        "vas": [
+          "VTT"
+        ],
+        "weight": 800.0,
+        "cod": 0.0,
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP008",
+        "postcode": "PNPP011",
+        "totalFees": 1.3,
+        "postmanPickup": {
+          "name": "Meang Menglong",
+          "phone": "0714804613",
+          "id": "278"
+        },
+        "status": "S210",
+        "statusName": "RECEIVED",
+        "actorType": "CUSTOMER",
+        "itemType": "RECEIVED",
+        "desc": "Received the order (Service: CCN; extra service: [VTT] ; Weight: 800 g; COD: 0.00 USD)",
+        "sort": {
+          "version": 1,
+          "lsn": 1781410519457
+        }
+      },
+      {
+        "numberOfRetries": 0,
+        "orderId": "3003488041",
+        "updatedBy": {
+          "name": "សុខ ច័ន្ទថាវី",
+          "phone": "+855977383467",
+          "id": "04a203e9-08b9-4c6f-a1b0-579c40991c4b"
+        },
+        "updatedAt": "2026-06-14T10:59:49.013+07:00",
+        "service": "CCN",
+        "vas": [
+          "VTT"
+        ],
+        "weight": 1225.0,
+        "cod": 0.0,
+        "cancelReason": "OTHER",
+        "deliveryPostcode": "PNPP011",
+        "postcode": "PNPP011",
+        "status": "S110",
+        "statusName": "CONFIRMED",
+        "actorType": "CUSTOMER",
+        "itemType": "CREATE_ORDER",
+        "desc": "Order is placed (Service: CCN; extra service: [VTT] ; Weight: 1,225 g; COD: 0.00 USD)",
+        "sort": {
+          "version": 0
+        },
+        "shipperName": "សុខ ច័ន្ទថាវី"
+      }
+    ]
+  }
+}

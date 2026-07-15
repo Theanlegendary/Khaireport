@@ -1,0 +1,61 @@
+Unique values of 'CURRENT STATUS':
+'410 - Giao thành công'
+'110 - Chưa tiếp nhận'
+'500 - Chuyển hoàn'
+'210 - Đã lấy hàng'
+'302 - Hoàn thành tải'
+'430 - Không giao được hàng'
+'306 - Nhận bàn giao'
+'402 - Xác nhận phân công'
+'311 - Nhận tay'
+'460 - Thông báo chuyển hoàn'
+'512 - Xác nhận phân công hoàn'
+'520 - Đã trả hàng'
+'200 - Đang lấy hàng'
+'230 - Không lấy được hàng'
+'480 - Chuyển giao địa chỉ mới'
+'309 - Nhận bưu gửi'
+'310 - Đóng kiện'
+'99 - '
+'420 - Hẹn giao lại'
+'401 - Phân công giao - Đã hoàn thành'
+'472 - Lưu kho'
+'300 - Gán đơn vào tải'
+
+Are there columns with user/messenger details?
+CURRENT STATUS
+  Values: ["'410 - Giao thành công'", "'110 - Chưa tiếp nhận'", "'500 - Chuyển hoàn'", "'210 - Đã lấy hàng'", "'302 - Hoàn thành tải'"]
+ACTION USER
+  Values: ["'ne300065 - Mey Chhy(0882125665)'", "'ne300073 - Heng Sovanndyza(0717130900)'", "'ne300030 - Pisak Ratha(060931858)'", "'ne300097 - Pheng Sophath(0715216160)'", "'ne300053 - Thy Thea(0885098103)'"]
+NOTE
+  Values: ["'ខលទៅអតិថិជនមុនពេលប្រគល់អីវ៉ាន់'", "'ទឹក៥កេស'", "'ប្រយ័ត្នបែកបាក់'", "'ឱ្យអតិថិជនត្រួតពិនិត្យអីវ៉ាន់'", "'ដឹកដល់ទីតាំង'"]
+STATUS 210 TIME
+  Values: ["'13/06/2026 07:04:15'", "'13/06/2026 07:05:17'", "'13/06/2026 07:29:49'", "'13/06/2026 07:34:59'", "'13/06/2026 07:56:38'"]
+ACTION USER.1
+  Values: ["'coc865655 - Phon Sovichea(0882133448)'", "'0715506622 - SENGHONG TIT(0715506622)'", "'coc865380 - Thin Vorleak(0712930022)'", "'0972626765 - Soklim Try(0972626765)'", "'0974595363 - Saron Long(0974595363)'"]
+ACTION POST OFFICE
+  Values: ["'THOP001'", "'KAMA018'", "'PREP001'", "'KRAA001'", "'SVAA002'"]
+STATUS 302/310 AT RECEIVING STORE / RECEIVING AGENT (FIRST TIME)
+  Values: ["'13/06/2026 07:14:42'", "'13/06/2026 07:07:51'", "'13/06/2026 18:31:06'", "'13/06/2026 11:50:25'", "'13/06/2026 11:49:32'"]
+ACTION USER.2
+  Values: ["'coc865655 - Phon Sovichea(0882133448)'", "'0715506622 - SENGHONG TIT(0715506622)'", "'ne300015 - Tha Phanith(0973377414)'", "'0972626765 - Soklim Try(0972626765)'", "'ne300037 - Sen Pomara(067647553)'"]
+ACTION POST OFFICE.1
+  Values: ["'THOP001'", "'KAMA018'", "'PREP001'", "'KRAA001'", "'KRAP001'"]
+STATUS 306  AT ORIGIN HUB (FIRST TIME)
+  Values: ["'13/06/2026 18:39:20'", "'13/06/2026 18:45:10'", "'13/06/2026 18:34:10'", "'13/06/2026 15:20:14'", "'13/06/2026 15:20:24'"]
+ACTION USER.3
+  Values: ["'vtc712225 - Chan Sopheak(0888169885)'", "'coc865326 - Bot Sovannaret(068337005)'", "'coc867650 - Oum Kosal(0885595027)'", "'vtc712222 - Chum Vutha(068236268)'", "'coc866879 - Ret Thearin(0887823122)'"]
+ACTION POST OFFICE.2
+  Values: ["'DVCMEGA1'", "'MEGA1'", "'DVCZ5'"]
+STATUS 306 AT STORE / AGENT (LAST TIME)
+  Values: ["'14/06/2026 14:11:12'", "'14/06/2026 14:11:08'", "'14/06/2026 14:04:26'", "'13/06/2026 17:16:14'", "'14/06/2026 08:54:08'"]
+ACTION USER.4
+  Values: ["'ne300065 - Mey Chhy(0882125665)'", "'coc865674 - Ben Bol(081848127)'", "'ne300045 - Sin Piseth(0976261537)'", "'coc868340 - Vuth Sorphorn(0884104345)'", "'coc865374 - Phat Rotha(0883331768)'"]
+ACTION POST OFFICE.3
+  Values: ["'PNPP012'", "'SIEP001'", "'TBKP001'", "'PNPP007'", "'PNPP001'"]
+STATUS 306 AT STORE / AGENT FROM HUB (FIRST TIME)
+  Values: ["'14/06/2026 14:11:12'", "'14/06/2026 14:11:08'", "'14/06/2026 14:04:26'", "'14/06/2026 11:29:06'", "'13/06/2026 17:16:14'"]
+ACTION USER.5
+  Values: ["'ne300065 - Mey Chhy(0882125665)'", "'coc865674 - Ben Bol(081848127)'", "'ne300011 - Meang Menglong(0714804613)'", "'ne300045 - Sin Piseth(0976261537)'", "'ne300037 - Sen Pomara(067647553)'"]
+ACTION POST OFFICE.4
+  Values: ["'PNPP012'", "'SIEP001'", "'PNPP011'", "'TBKP001'", "'KRAP001'"]

@@ -93,6 +93,15 @@
       ],
       "-1004430161132": [
         "SPEP001"
+      ],
+      "-1004432032933": [
+        "STUP001"
+      ],
+      "-1004391646622": [
+        "ROTP001"
+      ],
+      "-1004437427485": [
+        "MONP001"
       ]
     },
     "image_mode": "long",
@@ -575,10 +584,9 @@
     "center_group_columns": false,
     "wrap_text": true,
     "show_borders": true,
-    "font_name": "Aptos Narrow",
-    "title_color": "FFFFFF",
-    "title_fill_color": "172033",
-    "header_fill_color": "172033",
+    "font_name": "SF Pro",
+    "title_fill_color": "1F4E78",
+    "header_fill_color": "1F4E78",
     "header_font_color": "FFFFFF",
     "zone_fill_color": "FFFFFF",
     "zone_font_color": "0F172A",
@@ -626,7 +634,10 @@
       "TBKP001": "Zone 5",
       "ROTS001": "Zone 5",
       "MONS001": "Zone 5",
-      "STUS001": "Zone 5"
+      "STUS001": "Zone 5",
+      "STUP001": "Zone 5",
+      "ROTP001": "Zone 5",
+      "MONP001": "Zone 5"
     },
     "by_prefix": {
       "KAN": "Zone 1",
@@ -708,7 +719,10 @@
       "TBKP001",
       "ROTS001",
       "MONS001",
-      "STUS001"
+      "STUS001",
+      "STUP001",
+      "ROTP001",
+      "MONP001"
     ]
   },
   "zone_branches": {
