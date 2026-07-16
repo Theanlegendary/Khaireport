@@ -41,8 +41,8 @@ MAX_INDEX = 6  # Pickup has most: ZONE, HANDLE, CURRENT PO, ORDER ID, Cus name, 
 
 REPORT_COLS = {
     'Pickup':   ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'Cus name', 'Phone'],
-    'Delivery': ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'RECEIVER'],
-    'Pending':  ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'NEXT_ACTION', 'REMARK'],
+    'Delivery': ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'RECEIVER', 'ACTION', 'NEXT_STEP'],
+    'Pending':  ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'REMARK'],
 }
 
 REPORT_FILTER_COLS = {
@@ -65,25 +65,39 @@ HIGHLIGHT_OVER_DAYS = 1
 HIGHLIGHT_COLOR = 'FFEBEB'
 
 PENDING_REMARK_MAP = {
-    '306': 'Assign deliver (ចាត់តាំងអ្នកដឹក)',
-    '309': 'Assign deliver (ចាត់តាំងអ្នកដឹក)',
-    '311': 'Assign deliver (ចាត់តាំងអ្នកដឹក)',
-    '210': 'Handover truck (ផ្ទេរទៅឡានដឹក)',
-    '300': 'Accept handover (ទទួលការផ្ទេរ)',
-    '302': 'Accept handover (ទទួលការផ្ទេរ)',
-    '310': 'Handover truck (ផ្ទេរទៅឡានដឹក)',
-    '500': 'Handover truck (ផ្ទេរទៅឡានដឹក)',
+    '306': 'ដឹកជញ្ជូន (Deliver)',
+    '309': 'ដឹកជញ្ជូន (Deliver)',
+    '311': 'ដឹកជញ្ជូន (Deliver)',
+    '210': 'ត្រួតពិនិត្យ (Check)',
+    '300': 'ត្រួតពិនិត្យ (Check)',
+    '302': 'ត្រួតពិនិត្យ (Check)',
+    '310': 'ត្រួតពិនិត្យ (Check)',
+    '500': 'ផ្ញើត្រឡប់ (Return)',
 }
+
+DELIVERY_ACTION_MAP = {
+    '400': ('ដឹកជញ្ជូន', 'បែងចែកអ្នកដឹក'),
+    '401': ('ដឹកជញ្ជូន', 'ដឹកជូន'),
+    '402': ('ដឹកជញ្ជូន', 'ដឹកជូនឡើងវិញ'),
+    '420': ('ដឹកជញ្ជូន', 'ជូនដំណឹងភ្ញៀវ'),
+    '430': ('ដឹកជញ្ជូន', 'ទាក់ទងភ្ញៀវ'),
+    '460': ('ត្រឡប់', 'ផ្ញើត្រឡប់'),
+    '470': ('ត្រឡប់', 'បន្តត្រឡប់'),
+    '471': ('ពិនិត្យ', 'ពិនិត្យ'),
+    '472': ('ពិនិត្យ', 'ដោះស្រាយ'),
+    '480': ('ពិនិត្យ', 'កែអាសយដ្ឋាន'),
+}
+
 
 
 def get_next_action(status_code):
     sc = str(status_code).strip()
     if sc in ('306', '309', '311'):
-        return 'ត្រូវចាត់ចែងអ្នកដឹក'
-    elif sc in ('300', '302'):
-        return 'ត្រូវស្កេនទទួលអីវ៉ាន់'
-    elif sc in ('210', '310', '500'):
-        return 'រង់ចាំទ្បានដឹកមកដល់'
+        return 'ដឹកជញ្ជូន (Deliver)'
+    elif sc in ('300', '302', '210', '310'):
+        return 'ត្រួតពិនិត្យ (Check)'
+    elif sc in ('500',):
+        return 'ផ្ញើត្រឡប់ (Return)'
     return ''
 
 
@@ -877,6 +891,20 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
             filter_col = REPORT_FILTER_COLS[rn]
             if filter_col in df_t.columns:
                 df_t = df_t[df_t[filter_col].isin(target_handles)]
+        # Exclude MEGA/HUB/DVC from Pending (these show in /total mega instead)
+        if rn == 'Pending' and 'CURRENT POST OFFICE' in df_t.columns:
+            mega_mask = df_t['CURRENT POST OFFICE'].str.contains('MEGA|HUB|DVC', case=False, na=False)
+            df_t = df_t[~mega_mask].copy()
+                # Add ACTION columns for Delivery
+        if rn == 'Delivery' and 'STATUS_CODE' in df_t.columns:
+            def _delivery_action(row):
+                sc = str(row.get('STATUS_CODE', '')).strip()
+                return DELIVERY_ACTION_MAP.get(sc, ('', ''))[0]
+            def _delivery_next_step(row):
+                sc = str(row.get('STATUS_CODE', '')).strip()
+                return DELIVERY_ACTION_MAP.get(sc, ('', ''))[1]
+            df_t['ACTION'] = df_t.apply(_delivery_action, axis=1)
+            df_t['NEXT_STEP'] = df_t.apply(_delivery_next_step, axis=1)
         # Add REMARK column for Pending and remove completed statuses
         if rn == 'Pending' and 'STATUS_CODE' in df_t.columns:
             def _pending_remark(row):
@@ -884,9 +912,7 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
                 return PENDING_REMARK_MAP.get(sc, 'Unknown')
             def _pending_next_action(row):
                 sc = str(row.get('STATUS_CODE', '')).strip()
-                cur_po = str(row.get('CURRENT POST OFFICE', '')).strip()
-                recv_po = str(row.get('RECEIVE POST OFFICE', '')).strip()
-                return get_responsible_party(sc, cur_po, recv_po)
+                return get_next_action(sc)
             df_t['REMARK'] = df_t.apply(_pending_remark, axis=1)
             df_t['NEXT_ACTION'] = df_t.apply(_pending_next_action, axis=1)
         type_data[rn] = df_t

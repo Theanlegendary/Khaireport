@@ -25,6 +25,7 @@ COL_CURRENT_PO = 15      # CURRENT POST OFFICE
 COL_CURRENT_STATUS = 23  # CURRENT STATUS  ("110 - Chua tiep nhan")
 COL_SENDER = 3
 COL_RECEIVER = 4
+COL_ACTION_PO_306 = 35  # ACTION POST OFFICE for status 306
 
 
 def _status_code(value):
@@ -306,17 +307,18 @@ def run_report(rows, out_path, config, report):
 def build_mega_pivot(rows, pivot_cfg, zone_cfg):
     """
     Builds a pivot tree for MEGA check:
-      tree: dict[hub_code][(month, day)] = count
-      day_keys: sorted list of (month, day) tuples present in the data
+      Only counts orders where CURRENT POST OFFICE (col 15) contains MEGA, DVC, or HUB.
+      These are parcels actually stuck at hub right now.
     """
     exclude_test = pivot_cfg.get("exclude_test", False)
     test_keywords = pivot_cfg.get("test_keywords", ["test"])
     
-    # We exclude completed/cancelled/returned statuses: 410, 201, 520
-    exclude_statuses = {"410", "201", "520"}
+    exclude_statuses = {"410", "201", "520", "99", "100", "-99"}
 
-    tree = defaultdict(lambda: defaultdict(int)) # hub_code -> (month, day) -> count
+    tree = defaultdict(lambda: defaultdict(int))
+    urgent_tree = defaultdict(int)
     day_keys_seen = set()
+    today = datetime.now().date()
 
     for row in rows:
         if not row or row[COL_ORDER_ID] in (None, ""):
@@ -330,7 +332,7 @@ def build_mega_pivot(rows, pivot_cfg, zone_cfg):
         po = str(row[COL_CURRENT_PO] or "").strip()
         po_upper = po.upper()
         
-        # Check if it's a hub postcode (contains MEGA, HUB, or DVC)
+        # Only CURRENT POST OFFICE containing MEGA, DVC, or HUB
         if not ("MEGA" in po_upper or "HUB" in po_upper or "DVC" in po_upper):
             continue
 
@@ -342,11 +344,26 @@ def build_mega_pivot(rows, pivot_cfg, zone_cfg):
         tree[po][key] += 1
         day_keys_seen.add(key)
 
+        # Check urgent: created > 1 day ago
+        created_val = row[COL_CREATED_DATE]
+        created_date = None
+        if isinstance(created_val, datetime):
+            created_date = created_val.date()
+        elif created_val:
+            s = str(created_val).strip().split(" ")[0]
+            for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"):
+                try:
+                    created_date = datetime.strptime(s, fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if created_date and (today - created_date).days > 1:
+            urgent_tree[po] += 1
+
     day_keys = sorted(day_keys_seen)
-    return tree, day_keys
+    return tree, day_keys, urgent_tree
 
-
-def export_mega_pivot(tree, day_keys, out_path):
+def export_mega_pivot(tree, day_keys, out_path, urgent_tree=None):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "TỒN MEGA CHECK"
@@ -355,17 +372,15 @@ def export_mega_pivot(tree, day_keys, out_path):
     hdr_fill = PatternFill("solid", fgColor="BDD7EE")
     hdr_font = Font(name="Calibri", size=11, bold=True, color="000000")
     total_font = Font(name="Calibri", size=11, bold=True, color="000000")
+    urgent_font = Font(name="Calibri", size=11, bold=True, color="FF0000")
     data_font = Font(name="Calibri", size=11, color="000000")
     
     # 1. Title Row (Row 1)
     title_time = datetime.now().strftime("%d.%m_%HH%M")
     title_text = f"TỒN MEGA CHECK {title_time}"
     
-    # Count total columns to merge title
-    total_cols_count = 2 + len(day_keys)
-    
     ws.cell(1, 1, title_text)
-    ws.cell(1, 1).font = Font(name="Calibri", size=11, bold=True, color="FF0000") # Red bold
+    ws.cell(1, 1).font = Font(name="Calibri", size=11, bold=True, color="FF0000")
     ws.cell(1, 1).alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[1].height = 20
 
@@ -373,32 +388,30 @@ def export_mega_pivot(tree, day_keys, out_path):
     ws.cell(2, 1, "Count of ORDER ID").font = Font(name="Calibri", size=11, bold=True)
     ws.cell(2, 2, "Colu").font = Font(name="Calibri", size=11, bold=True)
     
-    # Fill background for header row 2 & 3
     for r in (2, 3):
         ws.row_dimensions[r].height = 20
 
-    # 3. Row 3: "Row Labels", Day numbers, "Total"
+    # 3. Row 3: "Row Labels", Day numbers, "Total", "Urgent"
     ws.cell(3, 1, "Row Labels")
     
-    # Write day numbers starting from Column B (column 2)
     col_idx_map = {}
     for idx, dk in enumerate(day_keys):
-        col_num = 2 + idx # Column B is 2, Column C is 3...
+        col_num = 2 + idx
         col_idx_map[dk] = col_num
-        # Format day as two digits
         ws.cell(3, col_num, f"{dk[1]:02d}")
     
     total_col_num = 2 + len(day_keys)
+    urgent_col_num = total_col_num + 1
     ws.cell(3, total_col_num, "Total")
+    ws.cell(3, urgent_col_num, "Urgent")
 
-    # Apply header formatting (fill, border, alignment) for Row 2 & Row 3
+    # Apply header formatting for Row 2 & Row 3
     for r in (2, 3):
-        for c in range(1, total_col_num + 1):
+        for c in range(1, urgent_col_num + 1):
             cell = ws.cell(r, c)
             cell.fill = hdr_fill
             cell.border = _BORDER
             if r == 2 and c > 2:
-                # Cells above day numbers are empty but filled
                 pass
             else:
                 cell.font = hdr_font
@@ -406,11 +419,14 @@ def export_mega_pivot(tree, day_keys, out_path):
                     cell.alignment = _CENTER
                 else:
                     cell.alignment = _LEFT
+    # Urgent header in red
+    ws.cell(3, urgent_col_num).font = urgent_font
 
     # 4. Data rows
     r = 4
     col_totals = defaultdict(int)
     grand_total = 0
+    total_urgent = 0
 
     for hub in sorted(tree.keys()):
         ws.row_dimensions[r].height = 20
@@ -437,6 +453,18 @@ def export_mega_pivot(tree, day_keys, out_path):
         tot_cell.alignment = _CENTER
         tot_cell.border = _BORDER
         grand_total += row_sum
+
+        # Row Urgent
+        hub_urgent = urgent_tree.get(hub, 0) if urgent_tree else 0
+        urg_cell = ws.cell(r, urgent_col_num)
+        urg_cell.border = _BORDER
+        urg_cell.alignment = _CENTER
+        if hub_urgent > 0:
+            urg_cell.value = hub_urgent
+            urg_cell.font = urgent_font
+        else:
+            urg_cell.font = data_font
+        total_urgent += hub_urgent
         r += 1
 
     # 5. Grand Total row
@@ -464,11 +492,20 @@ def export_mega_pivot(tree, day_keys, out_path):
     gt_cell.border = _BORDER
     gt_cell.alignment = _CENTER
 
+    # Urgent total in red
+    urg_gt = ws.cell(gt_row, urgent_col_num, total_urgent)
+    urg_gt.fill = hdr_fill
+    urg_gt.font = urgent_font
+    urg_gt.border = _BORDER
+    urg_gt.alignment = _CENTER
+
     # 6. Column widths
     ws.column_dimensions["A"].width = 16
-    for c in range(2, total_col_num + 1):
+    for c in range(2, urgent_col_num + 1):
         col_letter = get_column_letter(c)
         ws.column_dimensions[col_letter].width = 7
+    # Urgent column slightly wider
+    ws.column_dimensions[get_column_letter(urgent_col_num)].width = 9
     
     wb.save(out_path)
     return out_path, grand_total
@@ -476,8 +513,205 @@ def export_mega_pivot(tree, day_keys, out_path):
 
 def run_mega(source_path, out_path, config):
     rows = read_source(source_path)
-    tree, day_keys = build_mega_pivot(rows, config.get("pivot", {}), config.get("zone_mapping", {}))
-    return export_mega_pivot(tree, day_keys, out_path)
+    tree, day_keys, urgent_tree = build_mega_pivot(rows, config.get("pivot", {}), config.get("zone_mapping", {}))
+    return export_mega_pivot(tree, day_keys, out_path, urgent_tree=urgent_tree)
+
+
+
+
+def run_mega_combined(source_path, out_path, config):
+    """Build combined Excel: Zone pivot on top + MEGA pivot below."""
+    rows = read_source(source_path)
+    zone_cfg = config.get("zone_mapping", {})
+    pivot_cfg = config.get("pivot", {})
+
+    # Build zone pivot (all pending statuses by zone)
+    zone_tree, zone_day_keys, zone_month = build_pivot(rows, pivot_cfg, zone_cfg)
+
+    # Build mega pivot
+    mega_tree, mega_day_keys, mega_urgent = build_mega_pivot(rows, pivot_cfg, zone_cfg)
+
+    # Combined day keys
+    all_day_keys = sorted(set(zone_day_keys + mega_day_keys))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "MEGA + Zone"
+
+    hdr_fill = PatternFill("solid", fgColor="BDD7EE")
+    hdr_font = Font(name="Calibri", size=11, bold=True, color="000000")
+    total_font = Font(name="Calibri", size=11, bold=True, color="000000")
+    urgent_font = Font(name="Calibri", size=11, bold=True, color="FF0000")
+    data_font = Font(name="Calibri", size=11, color="000000")
+    title_font = Font(name="Calibri", size=11, bold=True, color="FF0000")
+
+    # ── ZONE TABLE (top) ──────────────────────────────────────────────
+    r = 1
+    title_time = datetime.now().strftime("%d.%m_%HH%M")
+    ws.cell(r, 1, f"BILLS {title_time}").font = title_font
+    ws.row_dimensions[r].height = 20
+    r += 1
+
+    # Zone header row
+    ws.cell(r, 1, "Zone").font = hdr_font
+    ws.cell(r, 1).fill = hdr_fill
+    ws.cell(r, 1).border = _BORDER
+    col_idx_map = {}
+    for idx, dk in enumerate(all_day_keys):
+        col_num = 2 + idx
+        col_idx_map[dk] = col_num
+        cell = ws.cell(r, col_num, f"{dk[1]:02d}")
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.border = _BORDER
+        cell.alignment = _CENTER
+    total_col = 2 + len(all_day_keys)
+    ws.cell(r, total_col, "Total").font = hdr_font
+    ws.cell(r, total_col).fill = hdr_fill
+    ws.cell(r, total_col).border = _BORDER
+    ws.cell(r, total_col).alignment = _CENTER
+    r += 1
+
+    # Zone data rows
+    zone_col_totals = defaultdict(int)
+    zone_grand = 0
+    for zone_name in sorted(zone_tree.keys()):
+        ws.cell(r, 1, zone_name).font = data_font
+        ws.cell(r, 1).border = _BORDER
+        row_sum = 0
+        for po in zone_tree[zone_name]:
+            for oid, dk in zone_tree[zone_name][po].items():
+                if dk in col_idx_map:
+                    col_num = col_idx_map[dk]
+                    cur = ws.cell(r, col_num).value or 0
+                    ws.cell(r, col_num, cur + 1)
+                    zone_col_totals[dk] += 1
+                    row_sum += 1
+        for c in range(2, total_col + 1):
+            cell = ws.cell(r, c)
+            cell.border = _BORDER
+            cell.alignment = _CENTER
+            cell.font = data_font
+            if cell.value == 0 or cell.value is None:
+                cell.value = None
+        ws.cell(r, total_col, row_sum).font = data_font
+        ws.cell(r, total_col).border = _BORDER
+        ws.cell(r, total_col).alignment = _CENTER
+        zone_grand += row_sum
+        ws.row_dimensions[r].height = 20
+        r += 1
+
+    # Zone total row
+    ws.cell(r, 1, "Total").font = total_font
+    ws.cell(r, 1).fill = hdr_fill
+    ws.cell(r, 1).border = _BORDER
+    for dk, col_num in col_idx_map.items():
+        val = zone_col_totals.get(dk, 0)
+        cell = ws.cell(r, col_num)
+        cell.value = val if val > 0 else None
+        cell.font = total_font
+        cell.fill = hdr_fill
+        cell.border = _BORDER
+        cell.alignment = _CENTER
+    ws.cell(r, total_col, zone_grand).font = total_font
+    ws.cell(r, total_col).fill = hdr_fill
+    ws.cell(r, total_col).border = _BORDER
+    ws.cell(r, total_col).alignment = _CENTER
+    ws.row_dimensions[r].height = 20
+    r += 2  # gap
+
+    # ── MEGA TABLE (bottom) ───────────────────────────────────────────
+    ws.cell(r, 1, f"TỒN MEGA CHECK {title_time}").font = title_font
+    ws.row_dimensions[r].height = 20
+    r += 1
+
+    # Mega header
+    ws.cell(r, 1, "Row Labels").font = hdr_font
+    ws.cell(r, 1).fill = hdr_fill
+    ws.cell(r, 1).border = _BORDER
+    for dk, col_num in col_idx_map.items():
+        cell = ws.cell(r, col_num, f"{dk[1]:02d}")
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.border = _BORDER
+        cell.alignment = _CENTER
+    ws.cell(r, total_col, "Total").font = hdr_font
+    ws.cell(r, total_col).fill = hdr_fill
+    ws.cell(r, total_col).border = _BORDER
+    ws.cell(r, total_col).alignment = _CENTER
+    urgent_col = total_col + 1
+    ws.cell(r, urgent_col, "Urgent").font = urgent_font
+    ws.cell(r, urgent_col).fill = hdr_fill
+    ws.cell(r, urgent_col).border = _BORDER
+    ws.cell(r, urgent_col).alignment = _CENTER
+    r += 1
+
+    # Mega data rows
+    mega_col_totals = defaultdict(int)
+    mega_grand = 0
+    mega_urgent_total = 0
+    for hub in sorted(mega_tree.keys()):
+        ws.cell(r, 1, hub).font = data_font
+        ws.cell(r, 1).border = _BORDER
+        row_sum = 0
+        for dk in all_day_keys:
+            col_num = col_idx_map[dk]
+            val = mega_tree[hub].get(dk, 0)
+            cell = ws.cell(r, col_num)
+            cell.border = _BORDER
+            cell.alignment = _CENTER
+            cell.font = data_font
+            if val > 0:
+                cell.value = val
+                row_sum += val
+                mega_col_totals[dk] += val
+        ws.cell(r, total_col, row_sum).font = data_font
+        ws.cell(r, total_col).border = _BORDER
+        ws.cell(r, total_col).alignment = _CENTER
+        # Urgent
+        hub_urgent = mega_urgent.get(hub, 0)
+        urg_cell = ws.cell(r, urgent_col)
+        urg_cell.border = _BORDER
+        urg_cell.alignment = _CENTER
+        if hub_urgent > 0:
+            urg_cell.value = hub_urgent
+            urg_cell.font = urgent_font
+        else:
+            urg_cell.font = data_font
+        mega_urgent_total += hub_urgent
+        mega_grand += row_sum
+        ws.row_dimensions[r].height = 20
+        r += 1
+
+    # Mega total row
+    ws.cell(r, 1, "Total").font = total_font
+    ws.cell(r, 1).fill = hdr_fill
+    ws.cell(r, 1).border = _BORDER
+    for dk, col_num in col_idx_map.items():
+        val = mega_col_totals.get(dk, 0)
+        cell = ws.cell(r, col_num)
+        cell.value = val if val > 0 else None
+        cell.font = total_font
+        cell.fill = hdr_fill
+        cell.border = _BORDER
+        cell.alignment = _CENTER
+    ws.cell(r, total_col, mega_grand).font = urgent_font
+    ws.cell(r, total_col).fill = hdr_fill
+    ws.cell(r, total_col).border = _BORDER
+    ws.cell(r, total_col).alignment = _CENTER
+    ws.cell(r, urgent_col, mega_urgent_total).font = urgent_font
+    ws.cell(r, urgent_col).fill = hdr_fill
+    ws.cell(r, urgent_col).border = _BORDER
+    ws.cell(r, urgent_col).alignment = _CENTER
+
+    # Column widths
+    ws.column_dimensions["A"].width = 16
+    for c in range(2, urgent_col + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 7
+    ws.column_dimensions[get_column_letter(urgent_col)].width = 9
+
+    wb.save(out_path)
+    return out_path, mega_grand
 
 
 if __name__ == "__main__":
