@@ -6,6 +6,33 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
+# ── Khmer Helpers ─────────────────────────────────────────────────────────────
+HEADER_KHMER_MAP = {
+    'ZONE': 'តំបន់',
+    'POST OFFICE HANDLE': 'ប៉ុស្តិ៍ទទួលខុសត្រូវ',
+    'CURRENT POST OFFICE': 'ប៉ុស្តិ៍បច្ចុប្បន្ន',
+    'ORDER ID': 'លេខបុង / លេខកូដបញ្ជាទិញ',
+    'Cus name': 'ឈ្មោះអតិថិជន',
+    'Phone': 'លេខទូរស័ព្ទ',
+    'RECEIVER': 'ឈ្មោះអតិថិជន',
+    'REMARK': 'សកម្មភាព ត្រូវធ្វើ',
+    'NEXT_ACTION': 'អ្នកគ្រប់គ្រង់ប្រតិបត្តិការ',
+    'Grand Total': 'សរុប',
+    'Pending': 'អីវ៉ាន់កំពុងរង់ចាំ (Pending)',
+    'Pickup': 'អីវ៉ាន់ត្រូវយក (Pickup)',
+    'Delivery': 'អីវ៉ាន់ត្រូវដឹក (Delivery)',
+}
+
+def translate_header(col_name):
+    return HEADER_KHMER_MAP.get(str(col_name).strip(), col_name)
+
+def get_khmer_month_name(mo):
+    months = {
+        1: 'មករា', 2: 'កុម្ភៈ', 3: 'មីនា', 4: 'មេសា', 5: 'ឧសភា', 6: 'មិថុនា',
+        7: 'កក្កដា', 8: 'សីហា', 9: 'កញ្ញា', 10: 'តុលា', 11: 'វិច្ឆិកា', 12: 'ធ្នូ'
+    }
+    return months.get(mo, "")
+
 # ── Status codes ───────────────────────────────────────────────────────────────
 CLASSIFY_LABEL = {'Pickup': 'Pickup', 'Delivery': 'Delivery', 'Pending': 'Pending'}
 
@@ -15,7 +42,7 @@ MAX_INDEX = 6  # Pickup has most: ZONE, HANDLE, CURRENT PO, ORDER ID, Cus name, 
 REPORT_COLS = {
     'Pickup':   ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'Cus name', 'Phone'],
     'Delivery': ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'RECEIVER'],
-    'Pending':  ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'REMARK', 'NEXT_ACTION'],
+    'Pending':  ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'NEXT_ACTION', 'REMARK'],
 }
 
 REPORT_FILTER_COLS = {
@@ -56,8 +83,36 @@ def get_next_action(status_code):
     elif sc in ('300', '302'):
         return 'ត្រូវស្កេនទទួលអីវ៉ាន់'
     elif sc in ('210', '310', '500'):
-        return 'រង់ចាំឡានដឹកមកដល់'
+        return 'រង់ចាំទ្បានដឹកមកដល់'
     return ''
+
+
+def get_responsible_party(status_code, cur_po, recv_po):
+    sc = str(status_code).strip()
+    cur_po_upper = str(cur_po).strip().upper()
+    recv_po_upper = str(recv_po).strip().upper()
+    
+    if sc in ('110', '120', '200', '311', '201'):
+        return 'ហាងផ្ញើ / Sender Store'
+    elif sc == '302':
+        if cur_po_upper == recv_po_upper:
+            return 'ហាងផ្ញើ / Sender Store'
+        else:
+            return 'ហាងទទួល / Receiver Store'
+    elif sc in ('210', '300'):
+        return 'អ្នកបើកបរដឹកជញ្ជូន / Transit Driver'
+    elif sc == '306':
+        if any(x in cur_po_upper for x in ('MEGA', 'HUB', 'DVC')):
+            return 'មជ្ឈមណ្ឌលចែកចាយ / Transit Hub'
+        else:
+            return 'ហាងទទួល / Receiver Store'
+    elif sc in ('310', '309', '400', '420', '472', '480'):
+        return 'ហាងទទួល / Receiver Store'
+    elif sc in ('401', '402', '430', '460'):
+        return 'អ្នកដឹកជញ្ជូន / Delivery Rider'
+    elif sc in ('500', '520', '540'):
+        return 'ហាងផ្ញើ (ត្រឡប់វិញ) / Return Sender Store'
+    return 'Unknown'
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -291,7 +346,9 @@ def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active
     # Row 1 — Title Row
     r = start_row
     ws.row_dimensions[r].height = 24
-    title_text = f"{report_name.upper()} BILL CHECK — {handle}" if handle else f"{report_name.upper()} BILL CHECK"
+    today_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    report_name_kh = translate_header(report_name)
+    title_text = f"{report_name_kh} — {handle} — {today_str}" if handle else f"{report_name_kh} — {today_str}"
     tc = ws.cell(r, start_col, title_text)
     tc.font      = _font(fn, t_fg, bold=True, size=11)
     tc.fill      = _fill(t_bg)
@@ -326,7 +383,7 @@ def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active
         is_index = (ci < len(padded_index))
         is_gt = (ci == n - 1)
         if is_index or is_gt:
-            ws.cell(r, col_idx, col_name)
+            ws.cell(r, col_idx, translate_header(col_name))
             ws.merge_cells(start_row=r, end_row=r + 1, start_column=col_idx, end_column=col_idx)
 
     # 3. Write day numbers on Row r + 1 (day number row) for day columns
@@ -350,9 +407,8 @@ def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active
     if current_month is not None:
         month_groups.append((current_month, group_start, start_col + n - 2))
 
-    import calendar
     for (yr, mo), start_c, end_c in month_groups:
-        ws.cell(r, start_c, calendar.month_name[mo])
+        ws.cell(r, start_c, get_khmer_month_name(mo))
         if end_c > start_c:
             ws.merge_cells(start_row=r, end_row=r, start_column=start_c, end_column=end_c)
 
@@ -408,28 +464,28 @@ def _write_table(ws, start_row, start_col, report_name, rows, index_cols, active
             elif status_code in ("420", "472") or is_overdue or status_code in ("500", "520", "540"):
                 if row_fill:
                     cell.fill = row_fill
-                cell.font      = _font(fn, '000000', bold=True)
+                cell.font      = _font(fn, '000000', bold=False)
                 cell.alignment = _align('center')
             elif col_name == index_cols[0]:
                 cell.fill      = _fill(z_bg)
-                cell.font      = _font(fn, z_fg, bold=True)
+                cell.font      = _font(fn, z_fg, bold=False)
                 cell.alignment = _align('center')
             elif len(index_cols) > 1 and col_name == index_cols[1]:
                 cell.fill      = _fill(g_bg)
-                cell.font      = _font(fn, g_fg, bold=True)
+                cell.font      = _font(fn, g_fg, bold=False)
                 cell.alignment = _align('center')
             elif col_name in index_cols:
                 # All other index columns (CURRENT POST OFFICE, ORDER ID, etc.) → center
-                cell.font      = _font(fn, '1E293B', bold=True)
+                cell.font      = _font(fn, '1E293B', bold=False)
                 cell.alignment = _align('center')
             elif col_name in active_days:
-                cell.font      = _font(fn, '1E293B', bold=True)
+                cell.font      = _font(fn, '1E293B', bold=False)
                 cell.alignment = _align('center')
             elif col_name == 'Grand Total':
                 cell.font      = _font(fn, RED, bold=True)
                 cell.alignment = _align('center')
             else:
-                cell.font      = _font(fn, '1E293B', bold=True)
+                cell.font      = _font(fn, '1E293B', bold=False)
                 cell.alignment = _align('center')
         r += 1
 
@@ -828,7 +884,9 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
                 return PENDING_REMARK_MAP.get(sc, 'Unknown')
             def _pending_next_action(row):
                 sc = str(row.get('STATUS_CODE', '')).strip()
-                return get_next_action(sc)
+                cur_po = str(row.get('CURRENT POST OFFICE', '')).strip()
+                recv_po = str(row.get('RECEIVE POST OFFICE', '')).strip()
+                return get_responsible_party(sc, cur_po, recv_po)
             df_t['REMARK'] = df_t.apply(_pending_remark, axis=1)
             df_t['NEXT_ACTION'] = df_t.apply(_pending_next_action, axis=1)
         type_data[rn] = df_t

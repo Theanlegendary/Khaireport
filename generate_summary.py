@@ -13,6 +13,19 @@ import calendar as _calendar
 from datetime import datetime, date as _date
 from PIL import Image, ImageDraw, ImageFont
 
+SUMMARY_HEADER_KHMER = {
+    "HANDLE": "ប៉ុស្តិ៍ / ហាង",
+    "Pickup": "ត្រូវយក",
+    "Delivery": "ត្រូវដឹក",
+    "Pending": "កំពុងរង់ចាំ",
+    "TOTAL": "សរុប",
+    "URGENT": "ប្រញាប់",
+    "U.Pickup": "ប្រញាប់.យក",
+    "U.Delivery": "ប្រញាប់.ដឹក",
+    "U.Pending": "ប្រញាប់.រង់ចាំ",
+    "GRAND TOTAL": "សរុបទាំងអស់"
+}
+
 # ── Palette ────────────────────────────────────────────────────────────────────
 C_TITLE_BG    = ( 10,  15,  35)   # near-black navy
 C_TITLE_FG    = (255, 255, 255)

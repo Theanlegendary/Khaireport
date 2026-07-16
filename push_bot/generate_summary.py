@@ -8,6 +8,15 @@ import io
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
+SUMMARY_HEADER_KHMER = {
+    "HANDLE": "ប៉ុស្តិ៍ / ហាង",
+    "Pickup": "ត្រូវយក",
+    "Delivery": "ត្រូវដឹក",
+    "Pending": "កំពុងរង់ចាំ",
+    "TOTAL": "សរុប",
+    "GRAND TOTAL": "សរុបទាំងអស់"
+}
+
 # ── Visual config ──────────────────────────────────────────────────────────────
 SCALE       = 3  # High-definition scaling factor
 FONT_SIZE   = 11 * SCALE

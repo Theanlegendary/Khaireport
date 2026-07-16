@@ -203,6 +203,7 @@ import downloader
 import generate_report
 import generate_summary
 import excel_to_image
+import report_cmd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH        = os.path.join(HERE, "config.json")
@@ -710,10 +711,13 @@ async def forward_result_to_groups(context: ContextTypes.DEFAULT_TYPE, payload):
                 except Exception as e:
                     log.error(f"Image to group {group_id}: {e}")
 
-            # Auto-send Excel file if handle has 50+ total rows
-            handle_total = sum(hr.get("handle_counts", {}).values())
-            if handle_total > 50:
+            # Auto-send Excel file if handle has 50+ pending rows
+            pending_count = hr.get("handle_counts", {}).get("Pending", 0)
+            threshold_count = pending_count if not wants_all else sum(hr.get("handle_counts", {}).values())
+            if threshold_count > 50:
                 for hf in hr["handle_files"]:
+                    if not wants_all and "_Pending_" not in os.path.basename(hf["path"]):
+                        continue
                     try:
                         with open(hf["path"], "rb") as ef:
                             await safe_api_call(
@@ -1318,7 +1322,7 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result["handle_results"],
             result["overall_counts"],
             zone_label=zone_label,
-            day_date_counts=None,
+            day_date_counts=total_day_date_counts if total_day_date_counts else None,
             urgent_counts=total_urgent_counts if total_urgent_counts else None,
         )
         img_buf.name = "summary.png"
@@ -4159,7 +4163,7 @@ async def run_push(
                         zone_results,
                         zone_overall,
                         zone_label=zone_label,
-                        day_date_counts=None,
+                        day_date_counts=zone_day_date_counts if zone_day_date_counts else None,
                         urgent_counts=zone_urgent_counts if zone_urgent_counts else None,
                     )
                     img_buf.name = f"{zone_key}_summary.png"
@@ -4663,6 +4667,29 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@pm_required_handler
+async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/report — generate Excel with all active bills (excludes done statuses)."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+    msg = await send_requester_text(update, context, "Building active bills report...")
+    tmpdir = tempfile.mkdtemp(prefix="report_")
+    track_report_dir(tmpdir)
+    stamp = datetime.now().strftime("%d.%m_%HH%M")
+    src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+    try:
+        downloader.download_detail(cfg["api"], src)
+        out_xlsx = os.path.join(tmpdir, f"Active_Bills_{stamp}.xlsx")
+        count = report_cmd.build_report_excel(src, out_xlsx, cfg)
+        caption = f"Active Bills Report {datetime.now().strftime('%d/%m/%Y %H:%M')}\nTotal: {count} bills"
+        with open(out_xlsx, "rb") as f:
+            await send_requester_document(update, context, f, os.path.basename(out_xlsx), caption=caption)
+        await edit_or_send_requester_text(msg, update, context, f"Done. {count} active bills exported.")
+    except Exception as e:
+        log.exception("Error in /report")
+        await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -4783,6 +4810,7 @@ def main():
     app.add_handler(CommandHandler("undelay",    cmd_undelay))
     app.add_handler(CommandHandler("delaylist",  cmd_delaylist))
     app.add_handler(CommandHandler("clean",      cmd_clean))
+    app.add_handler(CommandHandler("report",     cmd_report))
     app.add_handler(CommandHandler("deletereport", cmd_delete_report))
     app.add_handler(CommandHandler("delreport",    cmd_delete_report))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
