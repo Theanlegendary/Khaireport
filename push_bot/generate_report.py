@@ -42,7 +42,7 @@ MAX_INDEX = 6  # Pickup has most: ZONE, HANDLE, CURRENT PO, ORDER ID, Cus name, 
 REPORT_COLS = {
     'Pickup':   ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'Cus name', 'Phone'],
     'Delivery': ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'RECEIVER', 'ACTION', 'NEXT_STEP'],
-    'Pending':  ['ZONE', 'CURRENT POST OFFICE', 'ORDER ID', 'REMARK'],
+    'Pending':  ['ZONE', 'POST OFFICE HANDLE', 'CURRENT POST OFFICE', 'ORDER ID', 'NEXT_ACTION', 'REMARK'],
 }
 
 REPORT_FILTER_COLS = {
@@ -900,13 +900,9 @@ def generate_reports_from_data(export_path, ref_path, output_dir,
                 return PENDING_REMARK_MAP.get(sc, 'Unknown')
             def _pending_next_action(row):
                 sc = str(row.get('STATUS_CODE', '')).strip()
-                if sc in ('306', '309', '311'):
-                    return 'ដឹកជញ្ជូន (Deliver)'
-                elif sc in ('300', '302', '210', '310'):
-                    return 'ត្រួតពិនិត្យ (Check)'
-                elif sc in ('500',):
-                    return 'ផ្ញើត្រឡប់ (Return)'
-                return ''
+                cur_po = str(row.get('CURRENT POST OFFICE', '')).strip()
+                recv_po = str(row.get('RECEIVE POST OFFICE', '')).strip()
+                return get_responsible_party(sc, cur_po, recv_po)
             df_t['REMARK'] = df_t.apply(_pending_remark, axis=1)
             df_t['NEXT_ACTION'] = df_t.apply(_pending_next_action, axis=1)
         type_data[rn] = df_t
