@@ -542,7 +542,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
             for r in range(5, 11):
                 ws_zs.Rows(r).RowHeight = 22
             
-            ws_zs.Parent.Windows(1).DisplayGridlines = True
+            ws_zs.Parent.Windows(1).DisplayGridlines = False
             
             rng_zs = ws_zs.Range("A1:L10")
             rng_zs.CopyPicture(1, -4147)
@@ -618,7 +618,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 w = ws_cr.Columns(c).ColumnWidth
                 ws_cr.Columns(c).ColumnWidth = max(w + 2.0, 9.0)
                 
-            ws_cr.Parent.Windows(1).DisplayGridlines = True
+            ws_cr.Parent.Windows(1).DisplayGridlines = False
             ws_cr.Activate()
             
             rng_cr = ws_cr.Range("A1:K9")
@@ -703,7 +703,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 cur_w = ws_tmp_dr.Columns(c).ColumnWidth
                 ws_tmp_dr.Columns(c).ColumnWidth = max(cur_w + 2.0, 9.5)
                 
-            ws_tmp_dr.Parent.Windows(1).DisplayGridlines = True
+            ws_tmp_dr.Parent.Windows(1).DisplayGridlines = False
             
             rng = ws_tmp_dr.Range("A1:Y26")
             rng.CopyPicture(1, -4147)
@@ -776,7 +776,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 cur_w = ws_tmp_sr.Columns(c).ColumnWidth
                 ws_tmp_sr.Columns(c).ColumnWidth = max(cur_w + 2.0, 9.5)
                 
-            ws_tmp_sr.Parent.Windows(1).DisplayGridlines = True
+            ws_tmp_sr.Parent.Windows(1).DisplayGridlines = False
             
             rng = ws_tmp_sr.Range("A1:R26")
             rng.CopyPicture(1, -4147)
@@ -849,7 +849,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 cur_w = ws_tmp_ar.Columns(c).ColumnWidth
                 ws_tmp_ar.Columns(c).ColumnWidth = max(cur_w + 2.0, 9.5)
                 
-            ws_tmp_ar.Parent.Windows(1).DisplayGridlines = True
+            ws_tmp_ar.Parent.Windows(1).DisplayGridlines = False
             
             rng = ws_tmp_ar.Range("A1:R26")
             co = ws_tmp_ar.ChartObjects().Add(Left=0, Top=0, Width=w, Height=h)
@@ -924,7 +924,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 cur_w = ws_tmp.Columns(c).ColumnWidth
                 ws_tmp.Columns(c).ColumnWidth = max(cur_w + 2.0, 9.5)
                 
-            ws_tmp.Parent.Windows(1).DisplayGridlines = True
+            ws_tmp.Parent.Windows(1).DisplayGridlines = False
             
             rng = ws_tmp.Range("A1:W42")
             rng.CopyPicture(1, -4147)
@@ -1028,7 +1028,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                     cur_w = ws_tmp.Columns(c).ColumnWidth
                     ws_tmp.Columns(c).ColumnWidth = max(cur_w + 2.0, 9.5)
                     
-                ws_tmp.Parent.Windows(1).DisplayGridlines = True
+                ws_tmp.Parent.Windows(1).DisplayGridlines = False
                 
                 rng = ws_tmp.Range(f"A1:W{total_rows}")
                 time.sleep(0.1)
@@ -1237,7 +1237,7 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 cur_w = ws_cd.Columns(col_idx).ColumnWidth
                 ws_cd.Columns(col_idx).ColumnWidth = max(cur_w + 1.8, min_w)
                 
-            ws_cd.Parent.Windows(1).DisplayGridlines = True
+            ws_cd.Parent.Windows(1).DisplayGridlines = False
             ws_cd.Activate()
             
             rng_cd = ws_cd.Range(f"A1:Q{3+num_data_rows}")
