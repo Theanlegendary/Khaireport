@@ -5632,7 +5632,7 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         template_dir = os.path.dirname(os.path.abspath(__file__))
         template_files = [f for f in os.listdir(template_dir) if f.startswith("0.Master Daily Report") and f.endswith(".xlsx")]
         
-        preferred_template = "0.Master Daily Report - new - Aug _ NEW  25.xlsx"
+        preferred_template = "0.Master Daily Report - new - Sept_New.xlsx"
         if os.path.exists(os.path.join(template_dir, preferred_template)):
             template_name = preferred_template
             template_path = os.path.join(template_dir, preferred_template)
