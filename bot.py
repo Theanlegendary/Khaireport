@@ -20,7 +20,7 @@ import sys
 import tempfile
 import asyncio
 import io
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import threading
 import pandas as pd
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -201,9 +201,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 import downloader
 import generate_report
-import generate_summary
 import excel_to_image
-import report_cmd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH        = os.path.join(HERE, "config.json")
@@ -637,6 +635,30 @@ async def send_requester_photo(update: Update, context: ContextTypes.DEFAULT_TYP
                 return True
             except Exception as e2:
                 log.warning("Fallback send photo to group failed: %s", e2)
+        return False
+
+
+async def send_requester_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE, media_list):
+    chat_id = requester_chat_id(update)
+    if chat_id is None:
+        log.warning("Cannot send requester media group without a chat id.")
+        return False
+
+    try:
+        await safe_api_call(context.bot.send_media_group, chat_id=chat_id, media=media_list)
+        return True
+    except Exception as e:
+        log.warning("Could not send requester media group to %s: %s", chat_id, e)
+        if is_group_chat(update) and update.effective_chat:
+            try:
+                await safe_api_call(
+                    context.bot.send_media_group,
+                    chat_id=update.effective_chat.id, 
+                    media=media_list,
+                )
+                return True
+            except Exception as e2:
+                log.warning("Fallback send media group to group failed: %s", e2)
         return False
 
 
@@ -1110,6 +1132,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`push zone5` — Push to zone 5 only\n"
         "`/total` — Summary image + Excel (all data)\n"
         "`/total zone5` — Summary image + Excel (zone5 only)\n"
+        "`/dailyreport` — Text daily report (today vs last week same time)\n"
         "`/deletereport` — Delete a report (reply to the bot's report message)\n"
         "\n"
         "📥 *Export*\n"
@@ -1224,6 +1247,90 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await edit_or_send_requester_text(msg, update, context, f"Done. TỒN MEGA CHECK {datetime.now().strftime('%d.%m.%Y %H:%M')}")
             except Exception as e:
                 log.exception("Error in /total mega")
+                await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+            return
+
+        if zone_key == "penalty":
+            target_label = " ".join(args[1:]) if len(args) > 1 else "ALL"
+            msg = await send_requester_text(update, context, f"⏳ Generating INVENTORY PENALTY REPORT ({target_label.upper()})...")
+            tmpdir = tempfile.mkdtemp(prefix="penalty_")
+            track_report_dir(tmpdir)
+            stamp  = datetime.now().strftime("%d.%m_%HH%M")
+            src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+            try:
+                downloader.download_detail(cfg["api"], src, force_refresh=force_refresh)
+                import penalty_report
+                out_xlsx = os.path.join(tmpdir, f"INVENTORY_PENALTY_REPORT_{stamp}_{target_label.replace(' ', '_')}.xlsx")
+                tot_ho, tot_del, tot_pen_cnt, tot_fine = penalty_report.build_penalty_report(src, out_xlsx, target_label=target_label)
+                
+                # Render and send executive summary image
+                try:
+                    img_buf = penalty_report.render_penalty_summary_image(out_xlsx)
+                    img_buf.name = f"penalty_summary_{stamp}.png"
+                    await send_requester_photo(update, context, img_buf)
+                except Exception as e:
+                    log.warning("Failed to render penalty summary image: %s", e)
+
+                caption = (
+                    f"📊 *EXECUTIVE PENALTY DASHBOARD ({target_label.upper()})*\n"
+                    f"📦 Total Handover: `{tot_ho}` | 🚚 Total Delivery: `{tot_del}`\n"
+                    f"⚠️ Penalized Bills: `{tot_pen_cnt}`\n"
+                    f"💰 Total Penalty: `-${tot_fine:.2f}`\n\n"
+                    f"_• SLA Penalty: 1-2 Days (-$0.10) | ≥ 3 Days (-$0.40)_\n"
+                    f"_• Excused (Status 420/472): $0.00 fine_"
+                )
+                with open(out_xlsx, "rb") as f:
+                    await send_requester_document(
+                        update, context, f,
+                        os.path.basename(out_xlsx),
+                        caption=caption
+                    )
+                await edit_or_send_requester_text(msg, update, context, f"✅ Done! Sent INVENTORY PENALTY REPORT ({target_label.upper()}).")
+            except Exception as e:
+                log.exception("Error in /total penalty")
+                await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+            return
+
+        if zone_key == "speed":
+            target_label = " ".join(args[1:]) if len(args) > 1 else "ALL"
+            msg = await send_requester_text(update, context, f"⏳ Generating EXECUTIVE DELIVERY SPEED DASHBOARD ({target_label.upper()})...")
+            tmpdir = tempfile.mkdtemp(prefix="speed_")
+            track_report_dir(tmpdir)
+            stamp  = datetime.now().strftime("%d.%m_%HH%M")
+            src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+            try:
+                downloader.download_detail(cfg["api"], src, force_refresh=force_refresh)
+                import speed_report
+                out_xlsx = os.path.join(tmpdir, f"DELIVERY_SPEED_REPORT_{stamp}_{target_label.replace(' ', '_')}.xlsx")
+                tot_del, tot_u2, tot_24, tot_o8, tot_pay = speed_report.build_speed_report(src, out_xlsx, target_label=target_label)
+                
+                # Render and send executive summary image
+                try:
+                    img_buf = speed_report.render_speed_summary_image(out_xlsx)
+                    img_buf.name = f"speed_summary_{stamp}.png"
+                    await send_requester_photo(update, context, img_buf)
+                except Exception as e:
+                    log.warning("Failed to render speed summary image: %s", e)
+
+                fast_pct = ((tot_u2 + tot_24) / tot_del * 100) if tot_del > 0 else 0
+                caption = (
+                    f"⏱️ *EXECUTIVE DELIVERY SPEED DASHBOARD ({target_label.upper()})*\n"
+                    f"📦 Total Delivered (410): `{tot_del}`\n"
+                    f"🟢 < 2 Hours (+50%): `{tot_u2}`\n"
+                    f"🔵 2 - 4 Hours (+25%): `{tot_24}`\n"
+                    f"🔴 > 8 Hours (-25%): `{tot_o8}`\n"
+                    f"⚡ Fast Delivery Rate (<4h): `{fast_pct:.1f}%`\n"
+                    f"💵 Total Commission: `${tot_pay:.2f}`"
+                )
+                with open(out_xlsx, "rb") as f:
+                    await send_requester_document(
+                        update, context, f,
+                        os.path.basename(out_xlsx),
+                        caption=caption
+                    )
+                await edit_or_send_requester_text(msg, update, context, f"✅ Done! Sent EXECUTIVE DELIVERY SPEED DASHBOARD ({target_label.upper()}).")
+            except Exception as e:
+                log.exception("Error in /total speed")
                 await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
             return
 
@@ -4717,6 +4824,899 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
 
 
+def build_master_daily_report_excel(template_path, raw_excel_path, output_path, target_date, cutoff_time):
+    import win32com.client
+    import os
+    import pandas as pd
+    from datetime import datetime, date, timedelta
+    import time
+    import shutil
+    
+    # 1. Load raw data using pandas with dynamic header detection
+    xl = pd.ExcelFile(raw_excel_path)
+    sheet_name = xl.sheet_names[0]
+    df_preview = xl.parse(sheet_name, header=None, nrows=10)
+    header_row = 4
+    for r_idx, row in df_preview.iterrows():
+        if any('ORDER_NUMBER' in str(x).upper() or 'ORDER ID' in str(x).upper() for x in row):
+            header_row = r_idx
+            break
+    df = xl.parse(sheet_name, skiprows=header_row)
+    
+    # Column mapping & normalizations
+    col_map = {}
+    for c in df.columns:
+        cu = str(c).strip().upper()
+        if 'ORDER_NUMBER' in cu or 'ORDER ID' in cu:
+            col_map['ORDER_NUMBER'] = c
+        elif cu == 'CUSTOMER' or 'SENDER' in cu:
+            col_map['CUSTOMER'] = c
+        elif 'ORIGIN_BRANCH' in cu or 'RECEIVE BRANCH' in cu:
+            col_map['ORIGIN_BRANCH'] = c
+        elif 'ORIGIN_POST' in cu or 'RECEIVE POST' in cu:
+            col_map['ORIGIN_POST'] = c
+        elif 'DESTINATION_BRANCH' in cu or 'DELIVERY BRANCH' in cu:
+            col_map['DESTINATION_BRANCH'] = c
+        elif 'DESTINATION_POST' in cu or 'DELIVERY POST' in cu:
+            col_map['DESTINATION_POST'] = c
+        elif 'CREATED_BY' in cu or 'ACTION USER' in cu:
+            col_map['CREATED_BY'] = c
+        elif 'CREATED_AT' in cu or 'CREATED DATE' in cu:
+            col_map['CREATED_AT'] = c
+        elif 'PAYMENT_TERM' in cu or 'PAYMENT METHOD' in cu:
+            col_map['PAYMENT_TERM'] = c
+        elif 'BASE_FEE' in cu or 'BASE FEE' in cu:
+            col_map['BASE_FEE'] = c
+        elif 'VAS_FEE' in cu or 'VAS FEE' in cu:
+            col_map['VAS_FEE'] = c
+        elif 'DISCOUNT' in cu:
+            col_map['DISCOUNT'] = c
+        elif 'TOTAL_AMOUNT' in cu or 'TOTAL FEE' in cu:
+            col_map['TOTAL_AMOUNT'] = c
+        elif 'COD' in cu:
+            col_map['COD'] = c
+        elif 'ACTUAL_WEIGHT' in cu or 'WEIGHT' in cu:
+            col_map['ACTUAL_WEIGHT'] = c
+        elif 'SIZE' in cu:
+            col_map['SIZE'] = c
+        elif cu == 'BASE_SERVICE' or cu == 'SERVICE':
+            col_map['BASE_SERVICE'] = c
+        elif 'VAS_SERVICE' in cu:
+            col_map['VAS_SERVICE'] = c
+        elif 'VAS_INFO' in cu:
+            col_map['VAS_INFO'] = c
+        elif 'CARGO_TYPE' in cu or 'GOOD TYPE' in cu:
+            col_map['CARGO_TYPE'] = c
+        elif 'FROM_SOURCE' in cu:
+            col_map['FROM_SOURCE'] = c
+
+    # Vectorized lookups
+    service_map = {"CLT": "Tiêu chuẩn", "CCN": "Nhanh", "CNT": "Tiêu chuẩn"}
+    source_map = {
+        "APP - OMS": "App KH",
+        "WEB - OMS": "Web KH",
+        "WEB - TMS": "Web nhân viên",
+        "APP - TMS": "App nhân viên"
+    }
+    zone_map = {
+        "PNP": "ZONE 1", "KAN": "ZONE 1", "PRE": "ZONE 1", "SVA": "ZONE 1",
+        "TAK": "ZONE 2", "SPE": "ZONE 2", "KAM": "ZONE 2", "KEP": "ZONE 2", "KOH": "ZONE 2", "SIH": "ZONE 2",
+        "BAN": "ZONE 3", "BAT": "ZONE 3", "PUR": "ZONE 3", "CHH": "ZONE 3",
+        "SIE": "ZONE 4", "PRH": "ZONE 4", "THO": "ZONE 4", "ODD": "ZONE 4",
+        "CHA": "ZONE 5", "TBK": "ZONE 5", "KRA": "ZONE 5", "MON": "ZONE 5", "ROT": "ZONE 5", "STU": "ZONE 5"
+    }
+    branch_map = {
+        "KEP": "TAK",
+        "PAI": "BAT",
+        "TBK": "CHA"
+    }
+    internal_phones = {"884589745", "315555236", "886663766", "716560202", "977898616", "716718617", "716787878"}
+
+    created_col = col_map.get('CREATED_AT', 'CREATED_AT')
+    if created_col in df.columns:
+        df['parsed_dt'] = pd.to_datetime(df[created_col], dayfirst=True, format='mixed', errors='coerce')
+    else:
+        df['parsed_dt'] = pd.NaT
+
+    df = df.sort_values(by='parsed_dt', ascending=True, na_position='last').reset_index(drop=True)
+    
+    df['month'] = df['parsed_dt'].dt.month.fillna(0).astype(int)
+    df['day'] = df['parsed_dt'].dt.day.fillna(0).astype(int)
+    df['hour'] = df['parsed_dt'].dt.hour.fillna(0).astype(int)
+    df['minute'] = df['parsed_dt'].dt.minute.fillna(0).astype(int)
+
+    cust_col = col_map.get('CUSTOMER', 'CUSTOMER')
+    def extract_phone(cust):
+        s = str(cust).strip()
+        if " - " in s:
+            p = s.split(" - ")[0].strip()
+            digits = "".join(ch for ch in p if ch.isdigit())
+            return digits
+        return ""
+
+    if cust_col in df.columns:
+        df['phone'] = df[cust_col].apply(extract_phone)
+        df['cum_count'] = df.groupby(cust_col).cumcount() + 1
+    else:
+        df['phone'] = ""
+        df['cum_count'] = 1
+
+    # Prepare computed rows in memory
+    rows_data = []
+    for idx, row in df.iterrows():
+        r = idx + 2
+        m = int(row['month'])
+        d = int(row['day'])
+        h = int(row['hour'])
+        mi = int(row['minute'])
+        
+        date_formula = f"=DATE(2026,A{r},B{r})"
+        time_formula = f"=TIME(C{r},D{r},1)"
+        
+        base_svc = str(row.get(col_map.get('BASE_SERVICE', 'BASE_SERVICE'), '')).strip()
+        svc_text = service_map.get(base_svc, "Tiêu chuẩn")
+        
+        src_val = str(row.get(col_map.get('FROM_SOURCE', 'FROM_SOURCE'), '')).strip()
+        src_text = source_map.get(src_val, "Không xác định")
+        
+        try:
+            cod_num = float(row.get(col_map.get('COD', 'COD (USD)'), 0) or 0)
+        except Exception:
+            cod_num = 0.0
+        cod_text = "COD" if cod_num > 0 else "Non-COD"
+        
+        phone_str = row['phone']
+        cust_type = "Nội bộ" if phone_str in internal_phones else "KH ngoài"
+        
+        try:
+            tot_fee = float(row.get(col_map.get('TOTAL_AMOUNT', 'TOTAL_AMOUNT (USD) (4) = (1) + (2) - (3)'), 0) or 0)
+        except Exception:
+            tot_fee = 0.0
+            
+        branch_orig = str(row.get(col_map.get('ORIGIN_BRANCH', 'ORIGIN_BRANCH'), '')).strip().upper()
+        zone_text = zone_map.get(branch_orig, "")
+        branch_text = branch_map.get(branch_orig, branch_orig)
+        inter_prov = "Nội Tỉnh" if base_svc == "CNT" else "Liên Tỉnh"
+        
+        try:
+            phone_val = int(phone_str) if phone_str else ""
+        except Exception:
+            phone_val = phone_str
+            
+        cum_cnt = int(row['cum_count'])
+        
+        po_orig = str(row.get(col_map.get('ORIGIN_POST', 'ORIGIN_POST'), '')).strip().upper()
+        channel_code = po_orig[3] if len(po_orig) > 3 else "P"
+        
+        try:
+            weight_g = float(row.get(col_map.get('ACTUAL_WEIGHT', 'ACTUAL_WEIGHT (G)'), 0) or 0)
+            weight_kg = weight_g / 1000.0
+        except Exception:
+            weight_kg = 0.0
+            weight_g = 0.0
+            
+        oid_val = str(row.get(col_map.get('ORDER_NUMBER', 'ORDER_NUMBER'), '')).strip()
+        if oid_val.endswith('.0'):
+            oid_val = oid_val[:-2]
+            
+        row_cells = [
+            m, d, h, mi, date_formula, time_formula,
+            svc_text, src_text, cod_text, cust_type, tot_fee,
+            zone_text, branch_text, inter_prov, phone_val, cum_cnt,
+            channel_code, weight_kg,
+            row.get('No', idx+1),
+            oid_val,
+            str(row.get(col_map.get('CUSTOMER', 'CUSTOMER'), '')),
+            branch_orig,
+            po_orig,
+            str(row.get(col_map.get('DESTINATION_BRANCH', 'DESTINATION_BRANCH'), '')).strip().upper(),
+            str(row.get(col_map.get('DESTINATION_POST', 'DESTINATION_POST'), '')).strip().upper(),
+            str(row.get(col_map.get('CREATED_BY', 'CREATED_BY'), '')),
+            str(row.get(col_map.get('CREATED_AT', 'CREATED_AT'), '')),
+            str(row.get(col_map.get('PAYMENT_TERM', 'PAYMENT_TERM'), '')),
+            row.get(col_map.get('BASE_FEE', 'BASE_FEE (USD) (1)'), 0),
+            row.get(col_map.get('VAS_FEE', 'VAS_FEE (USD) (2)'), 0),
+            row.get(col_map.get('DISCOUNT', 'DISCOUNT (USD) (3)'), 0),
+            tot_fee,
+            cod_num,
+            weight_g,
+            str(row.get(col_map.get('SIZE', 'SIZE (L*W*H) (CM)'), '')),
+            base_svc,
+            str(row.get(col_map.get('VAS_SERVICE', 'VAS_SERVICE'), '')),
+            str(row.get(col_map.get('VAS_INFO', 'VAS_INFO'), '')),
+            str(row.get(col_map.get('CARGO_TYPE', 'CARGO_TYPE'), '')),
+            src_val
+        ]
+        rows_data.append(row_cells)
+
+    # Copy template to output path
+    shutil.copy2(template_path, output_path)
+    
+    import pythoncom
+    pythoncom.CoInitialize()
+    
+    excel = None
+    wb = None
+    try:
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+        except Exception:
+            excel = win32com.client.Dispatch("Excel.Application")
+            
+        try:
+            excel.Visible = False
+        except Exception:
+            pass
+        try:
+            excel.DisplayAlerts = False
+            excel.ScreenUpdating = False
+        except Exception:
+            pass
+            
+        abs_output_path = os.path.abspath(output_path)
+        wb = excel.Workbooks.Open(abs_output_path)
+        
+        t_date = target_date.date() if isinstance(target_date, datetime) else target_date
+        serial_date = (t_date - date(1899, 12, 30)).days
+        
+        # 1. Update Date and Cutoff in Zone_Report (C1, C2)
+        try:
+            ws_zone = wb.Worksheets("Zone_Report")
+            ws_zone.Cells(1, 3).Value = serial_date
+            ws_zone.Cells(1, 3).NumberFormat = "yyyy-mm-dd"
+            ws_zone.Cells(2, 3).Value = cutoff_time.strftime("%H:%M:%S")
+        except Exception:
+            pass
+            
+        # Update Date and Cutoff in Province_Report, Showroom_RP, Agent_RP
+        for name in ["Province_Report", "Province_Report (2)", "Showroom_RP", "Agent_RP"]:
+            try:
+                ws = wb.Worksheets(name)
+                ws.Cells(1, 2).Value = serial_date
+                ws.Cells(1, 2).NumberFormat = "yyyy-mm-dd"
+                ws.Cells(2, 2).Value = cutoff_time.strftime("%H:%M:%S")
+                
+                # Robust day target formula covering all 31 days (Days 1..13 fallback to Column I)
+                if "Province_Report" in name:
+                    for r in range(8, 45):
+                        po_code = ws.Cells(r, 2).Text.strip()
+                        if not po_code or r in (7, 22):
+                            continue
+                        ws.Cells(r, 10).Formula = (
+                            f"=IFERROR("
+                            f"INDEX('Day target'!$M$44:$AD$79, MATCH(Province_Report!$B{r},'Day target'!$C$44:$C$79,0), MATCH($C$1,'Day target'!$M$41:$AD$41,0)), "
+                            f"INDEX('Day target'!$I$44:$I$79, MATCH(Province_Report!$B{r},'Day target'!$C$44:$C$79,0))"
+                            f")"
+                        )
+            except Exception:
+                pass
+                
+        # 2. Write to Data Revenue sheet
+        try:
+            ws_rev = wb.Worksheets("Data Revenue")
+            
+            if rows_data:
+                # Write in single block assignment
+                rng_write = ws_rev.Range(ws_rev.Cells(2, 1), ws_rev.Cells(len(rows_data) + 1, 40))
+                rng_write.Value = tuple(tuple(r) for r in rows_data)
+                
+                # Clear leftover old rows if previous data was longer
+                old_last = ws_rev.Cells(ws_rev.Rows.Count, "AA").End(-4162).Row
+                if old_last > len(rows_data) + 1:
+                    ws_rev.Range(ws_rev.Cells(len(rows_data) + 2, 1), ws_rev.Cells(old_last, 40)).Value = None
+        except Exception as e:
+            import logging
+        # Ensure Zone_Report customer analysis rows (U175:Y{last_r}) have live formulas
+        try:
+            ws_z = wb.Worksheets("Zone_Report")
+            last_cust_r = ws_z.Cells(ws_z.Rows.Count, "R").End(-4162).Row # xlUp
+            if last_cust_r >= 175:
+                ws_z.Range(f"U175:Y{last_cust_r}").Formula = ws_z.Range("U175:Y175").Formula
+        except Exception:
+            pass
+
+        # Recalculate
+        excel.CalculateFull()
+        
+        # Extract exact values directly from calculated sheets
+        metrics = None
+        try:
+            ws_p = wb.Worksheets("Province_Report")
+            ws_sr = wb.Worksheets("Showroom_RP")
+            ws_ar = wb.Worksheets("Agent_RP")
+            
+            total_val = int(float(ws_p.Range("AG6").Value or 0))
+            diff_val = int(float(ws_p.Range("AI6").Value or 0))
+            sp_val = int(float(ws_p.Range("AL6").Value or 0))
+            agent_val = int(float(ws_p.Range("AQ6").Value or 0))
+            sr_val = int(float(ws_p.Range("AV6").Value or 0))
+            
+            under_5_pnp = []
+            under_5_prov = []
+            zero_pos = []
+            
+            for r in range(8, 45):
+                po_code = str(ws_p.Cells(r, 2).Value or '').strip().upper()
+                if not po_code or len(po_code) <= 3 or r in (7, 22):
+                    continue
+                try:
+                    orders = int(float(ws_p.Cells(r, 11).Value or 0)) # Col K
+                except Exception:
+                    orders = 0
+                if orders == 0:
+                    zero_pos.append(po_code)
+                elif orders < 5:
+                    if po_code.startswith("PNP"):
+                        num_part = po_code.replace("PNPP", "").replace("PNP", "")
+                        under_5_pnp.append(num_part)
+                    else:
+                        under_5_prov.append(po_code)
+                        
+            under_5_branches = []
+            for r in range(7, 29):
+                b_name = str(ws_p.Cells(r, 29).Value or '').strip()
+                if not b_name:
+                    continue
+                try:
+                    b_orders = int(float(ws_p.Cells(r, 33).Value or 0))
+                except Exception:
+                    b_orders = 0
+                if b_orders < 5:
+                    under_5_branches.append(b_name)
+                    
+            lowest_sr = []
+            for r in range(6, 28):
+                b_name = str(ws_sr.Cells(r, 4).Value or '').strip()
+                if not b_name:
+                    continue
+                try:
+                    sr_orders = int(float(ws_sr.Cells(r, 12).Value or 0))
+                    sr_target = int(float(ws_sr.Cells(r, 11).Value or 0))
+                    comp = float(ws_sr.Cells(r, 13).Value or 0)
+                except Exception:
+                    sr_orders, sr_target, comp = 0, 0, 0.0
+                if sr_orders == 0 or (sr_target > 0 and comp < 1.0):
+                    lowest_sr.append(b_name)
+                    
+            lowest_agent = []
+            for r in range(6, 28):
+                b_name = str(ws_ar.Cells(r, 4).Value or '').strip()
+                if not b_name:
+                    continue
+                try:
+                    ag_orders = int(float(ws_ar.Cells(r, 12).Value or 0))
+                    ag_target = int(float(ws_ar.Cells(r, 11).Value or 0))
+                    comp = float(ws_ar.Cells(r, 13).Value or 0)
+                except Exception:
+                    ag_orders, ag_target, comp = 0, 0, 0.0
+                if ag_orders == 0 or (ag_target > 0 and comp < 1.0):
+                    lowest_agent.append(b_name)
+                    
+            metrics = {
+                "total": total_val,
+                "diff_n1": diff_val,
+                "sp": sp_val,
+                "agent": agent_val,
+                "showroom": sr_val,
+                "under_5_pnp": under_5_pnp,
+                "under_5_prov": under_5_prov,
+                "zero_pos": zero_pos,
+                "under_5_branches": under_5_branches,
+                "lowest_showroom": lowest_sr,
+                "lowest_agent": lowest_agent
+            }
+        except Exception:
+            import logging
+            logging.exception("Error extracting metrics from Excel")
+            
+        wb.Save()
+        return metrics
+        
+    finally:
+        if wb:
+            try:
+                wb.Close(SaveChanges=True)
+            except Exception:
+                pass
+        if excel:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
+def format_daily_report_text(metrics: dict, target_date, cutoff_time) -> str:
+    today = datetime.now().date()
+    time_str = datetime.now().strftime("%H:%M") if target_date == today else "23:59"
+    date_formatted = target_date.strftime("%d/%m")
+    
+    total = metrics.get("total", 0)
+    diff = metrics.get("diff_n1", 0)
+    if diff < 0:
+        diff_text = f"giảm  {-diff}  đơn"
+    elif diff > 0:
+        diff_text = f"tăng  {diff}  đơn"
+    else:
+        diff_text = "bằng  0  đơn"
+        
+    sp_count = metrics.get("sp", 0)
+    agent_count = metrics.get("agent", 0)
+    sr_count = metrics.get("showroom", 0)
+    
+    under_5_pnp = metrics.get("under_5_pnp", [])
+    under_5_prov = metrics.get("under_5_prov", [])
+    zero_pos = metrics.get("zero_pos", [])
+    
+    total_low_pos = len(under_5_pnp) + len(under_5_prov) + len(zero_pos)
+    
+    lines = [
+        f"📦 BÁO CÁO SẢN LƯỢNG CẬP NHẬT ĐẾN HIỆN TẠI {date_formatted}-{time_str}\n",
+        "Báo cáo PTGĐ Anh @Trungnh2 và các anh GĐCN, GĐV @everyone PKD kính gửi kết quả sản lượng cập nhật đến hiện tại:",
+        f"Tổng sản lượng: {total} đơn,  {diff_text} so với cùng kỳ ngày hôm trước.\n",
+        "📌 Xét theo kênh:",
+        f"Service Point: {sp_count} đơn",
+        f"Đại lý: {agent_count} đơn",
+        f"Showroom: {sr_count} đơn\n",
+    ]
+    
+    lines.append(f"📌{total_low_pos} Bưu cục  phát sinh dưới 5 đơn:")
+    if under_5_pnp:
+        lines.append(f"PNPP({', '.join(sorted(under_5_pnp))})")
+    for po in sorted(under_5_prov):
+        lines.append(f"+{po}")
+    for po in sorted(zero_pos):
+        lines.append(f"+{po} Chưa phát sinh đơn")
+    if total_low_pos == 0:
+        lines.append("Không có")
+    lines.append("")
+    
+    under_5_branches = metrics.get("under_5_branches", [])
+    lines.append(f"📌{len(under_5_branches)} chi nhánh  phát sinh dưới 5 đơn:")
+    if under_5_branches:
+        for b_name in under_5_branches:
+            lines.append(f"+{b_name}")
+    else:
+        lines.append("Không có")
+    lines.append("")
+    
+    lowest_sr = metrics.get("lowest_showroom", [])
+    if lowest_sr:
+        lines.append(f"📌{len(lowest_sr)} chi nhánh  phát sinh thấp nhất  kênh Showroom :")
+        for b_name in lowest_sr:
+            lines.append(f"+{b_name}")
+        lines.append("")
+        
+    lowest_agent = metrics.get("lowest_agent", [])
+    if lowest_agent:
+        lines.append(f"📌{len(lowest_agent)} chi nhánh  phát sinh thấp nhất  kênh Đại lý :")
+        for b_name in lowest_agent:
+            lines.append(f"+{b_name}")
+        lines.append("")
+        
+    lines.append("Trân trọng.")
+    return "\n".join(lines)
+
+
+@pm_required_handler
+async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/dailyreport [date] — generate text daily report (volume, comparison, zero-order offices/branches), render screenshot image and send populated Master Daily Excel."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+    
+    # Parse optional date argument
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    target_date = None
+    today = datetime.now().date()
+    
+    if args:
+        date_str = args[0]
+        # Support DD/MM, DD/MM/YYYY, YYYY-MM-DD
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m"):
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                if "%d/%m" in fmt:
+                    dt = dt.replace(year=today.year)
+                target_date = dt.date()
+                break
+            except ValueError:
+                continue
+        if target_date is None:
+            await private_or_current_reply(
+                update, context,
+                f"❌ Invalid date format: '{date_str}'.\n"
+                f"Please use DD/MM (e.g. 10/08), DD/MM/YYYY (e.g. 10/08/2026), or YYYY-MM-DD."
+            )
+            return
+    else:
+        target_date = today
+
+    date_display = target_date.strftime("%d/%m")
+    msg = await send_requester_text(update, context, f"Generating daily report for {date_display}...")
+    
+    tmpdir = tempfile.mkdtemp(prefix="daily_report_")
+    track_report_dir(tmpdir)
+    src = os.path.join(tmpdir, f"export_pickup_revenue_{target_date.strftime('%Y%m%d')}.xlsx")
+    
+    last_week_date = target_date - timedelta(days=7)
+    
+    try:
+        # Date range: from Day 1 of the month to target_date
+        # If target_date is within first 7 days, we still count from Day 1 (or last week if earlier)
+        month_start_date = target_date.replace(day=1)
+        earliest_date = min(month_start_date, last_week_date)
+        from_date_str = earliest_date.strftime("%Y%m%d")
+        to_date_str = target_date.strftime("%Y%m%d")
+        
+        # Download pickup revenue detail from API
+        downloader.download_pickup_revenue(
+            cfg["api"], src,
+            from_date=from_date_str,
+            to_date=to_date_str
+        )
+            
+        # Parse Excel data
+        import pandas as pd
+        xl = pd.ExcelFile(src)
+        sheet_name = xl.sheet_names[0]
+        df_preview = xl.parse(sheet_name, header=None, nrows=10)
+        header_row = 4
+        for r_idx, row in df_preview.iterrows():
+            if any('ORDER_NUMBER' in str(x).upper() or 'ORDER ID' in str(x).upper() for x in row):
+                header_row = r_idx
+                break
+        df = xl.parse(sheet_name, skiprows=header_row)
+        
+        # Determine created date col
+        created_col = None
+        for c in df.columns:
+            cu = str(c).strip().upper()
+            if 'CREATED_AT' in cu or 'CREATED DATE' in cu:
+                created_col = c
+                break
+        if not created_col:
+            raise ValueError("Excel file is missing CREATED_AT/CREATED DATE column.")
+            
+        # Parse datetime
+        df['parsed_datetime'] = pd.to_datetime(df[created_col], dayfirst=True, format='mixed', errors='coerce')
+        df['parsed_date'] = df['parsed_datetime'].dt.date
+        
+        # Exclude test orders
+        test_order_ids = set()
+        from generate_report import load_test_order_ids
+        try:
+            test_order_ids = load_test_order_ids(cfg)
+        except Exception:
+            pass
+            
+        test_keywords = cfg.get("pivot", {}).get("test_keywords", ["test"])
+        
+        oid_col = None
+        cust_col = None
+        po_col = None
+        branch_col = None
+        for c in df.columns:
+            cu = str(c).strip().upper()
+            if 'ORDER_NUMBER' in cu or 'ORDER ID' in cu:
+                oid_col = c
+            elif cu == 'CUSTOMER' or 'SENDER' in cu:
+                cust_col = c
+            elif 'ORIGIN_POST' in cu or 'RECEIVE POST' in cu:
+                po_col = c
+            elif 'ORIGIN_BRANCH' in cu or 'RECEIVE BRANCH' in cu:
+                branch_col = c
+
+        # Comprehensive test exclusion matching generate_report
+        test_col = next((c for c in df.columns if str(c).strip().upper() in ['TEST', 'IS_TEST', 'IS TEST', 'TEST ORDER']), None)
+        if test_col:
+            df = df[df[test_col].isna() | df[test_col].astype(str).str.strip().isin(['', 'nan', 'NaN', '#N/A'])].copy()
+            
+        test_check_cols = [c for c in df.columns if any(k in str(c).lower() for k in ('name', 'note', 'customer', 'sender', 'receiver', 'remark', 'address'))]
+        
+        def is_test_row(row):
+            if oid_col:
+                oid = str(row.get(oid_col, '')).strip()
+                if oid.endswith('.0'):
+                    oid = oid[:-2]
+                if oid in test_order_ids:
+                    return True
+            for col in test_check_cols:
+                val = str(row.get(col, '')).lower()
+                if any(kw in val for kw in test_keywords):
+                    return True
+            return False
+            
+        df['is_test_order'] = df.apply(is_test_row, axis=1)
+        df_clean = df[~df['is_test_order']].copy()
+        
+        # Sort chronologically and compute cumulative order count per customer in month
+        df_clean = df_clean.sort_values(by='parsed_datetime', ascending=True, na_position='last').reset_index(drop=True)
+        if cust_col and cust_col in df_clean.columns:
+            df_clean['cum_count'] = df_clean.groupby(cust_col).cumcount() + 1
+        else:
+            df_clean['cum_count'] = 1
+        
+        # Determine cutoff time
+        if target_date == today:
+            cutoff_time = datetime.now().time()
+        else:
+            cutoff_time = datetime.max.time()
+            
+        # Filter target date orders
+        df_target_all = df_clean[df_clean['parsed_date'] == target_date]
+        df_target = df_target_all[df_target_all['parsed_datetime'].dt.time <= cutoff_time].copy()
+        total_target = len(df_target)
+        
+        # Filter same day yesterday orders (cùng kỳ ngày)
+        yesterday_date = target_date - timedelta(days=1)
+        df_yesterday_all = df_clean[df_clean['parsed_date'] == yesterday_date]
+        df_yesterday = df_yesterday_all[df_yesterday_all['parsed_datetime'].dt.time <= cutoff_time]
+        total_yesterday = len(df_yesterday)
+        
+        diff = total_target - total_yesterday
+        if diff < 0:
+            diff_text = f"giảm {-diff} đơn"
+        elif diff > 0:
+            diff_text = f"tăng {diff} đơn"
+        else:
+            diff_text = "bằng 0 đơn"
+            
+        # Channels breakdown
+        def get_channel_type(po):
+            po_str = str(po).strip().upper()
+            if len(po_str) > 3:
+                c = po_str[3]
+                if c == 'P':
+                    return 'Service Point'
+                elif c == 'A':
+                    return 'Agent'
+                elif c == 'S':
+                    return 'Showroom'
+            return 'Service Point'
+            
+        df_target = df_target.copy()
+        target_po_col = po_col or 'ORIGIN_POST'
+        df_target['channel'] = df_target[target_po_col].apply(get_channel_type) if target_po_col in df_target.columns else 'Service Point'
+        channel_counts = df_target['channel'].value_counts()
+        
+        count_sp = channel_counts.get('Service Point', 0)
+        count_agent = channel_counts.get('Agent', 0)
+        count_showroom = channel_counts.get('Showroom', 0)
+        
+        # Zero order post offices (Service Points only)
+        total_zones = cfg.get("total_zones", {})
+        monitored_sp_pos = []
+        for zone, pos in total_zones.items():
+            for po in pos:
+                po_upper = po.strip().upper()
+                if len(po_upper) > 3 and po_upper[3] == 'P':
+                    monitored_sp_pos.append(po_upper)
+        monitored_sp_pos = sorted(list(set(monitored_sp_pos)))
+        
+        active_pos_today = set()
+        if target_po_col in df_target.columns:
+            active_pos_today = set(df_target[target_po_col].dropna().astype(str).str.strip().str.upper().unique())
+        zero_sp_pos = [po for po in monitored_sp_pos if po not in active_pos_today]
+        
+        # Group into Phnom Penh and Provinces
+        zero_pnp = [po for po in zero_sp_pos if po.startswith("PNP")]
+        zero_province = [po for po in zero_sp_pos if not po.startswith("PNP")]
+        
+        # Zero order branches
+        BRANCH_NAMES = {
+            "PNP": "Phnom Penh",
+            "KAN": "Kandal",
+            "PRE": "Prey Veng",
+            "SVA": "Svay Rieng",
+            "KAM": "Kampot",
+            "KOH": "Koh Kong",
+            "SIH": "Sihanoukville",
+            "SPE": "Kampong Speu",
+            "TAK": "Takeo",
+            "BAN": "Banteay Meanchey",
+            "BAT": "Battambang",
+            "CHH": "Kampong Chhnang",
+            "PUR": "Pursat",
+            "PRH": "Preah Vihear",
+            "SIE": "Siem Reap",
+            "THO": "Kampong Thom",
+            "ODD": "Otdar Meanchey",
+            "CHA": "Kampong Cham",
+            "KRA": "Kratie",
+            "MON": "Mondul Kiri",
+            "ROT": "Ratanak Kiri",
+            "STU": "Stung Treng"
+        }
+        
+        branch_map_ref = {"KEP": "TAK", "PAI": "BAT", "TBK": "CHA"}
+        def get_branch_code(po):
+            po_str = str(po).strip().upper()
+            prefix = po_str[:3]
+            return branch_map_ref.get(prefix, prefix)
+            
+        active_branches = set()
+        for po in active_pos_today:
+            b_code = get_branch_code(po)
+            if b_code in BRANCH_NAMES:
+                active_branches.add(b_code)
+                
+        zero_branches = [b for b in BRANCH_NAMES.keys() if b not in active_branches]
+        zero_branch_names = [BRANCH_NAMES[b] for b in zero_branches]
+        
+        # Zero New Customer Inday calculation from real data
+        df_target_new_cust = df_target[df_target.get('cum_count', 0) == 1] if 'cum_count' in df_target.columns else pd.DataFrame()
+        active_new_cust_pos = set()
+        if not df_target_new_cust.empty and target_po_col in df_target_new_cust.columns:
+            active_new_cust_pos = set(df_target_new_cust[target_po_col].dropna().astype(str).str.strip().str.upper().unique())
+            
+        zero_new_cust_by_zone = {}
+        for z_idx in range(1, 6):
+            z_key = f"zone{z_idx}"
+            pos = total_zones.get(z_key, [])
+            zero_in_z = [po.strip().upper() for po in pos if po.strip().upper() not in active_new_cust_pos]
+            zero_new_cust_by_zone[z_key] = zero_in_z
+
+        def format_zone_zero_new_cust(zero_pos_by_zone):
+            lines = []
+            for z_idx in range(1, 6):
+                z_key = f"zone{z_idx}"
+                pos = zero_pos_by_zone.get(z_key, [])
+                if not pos:
+                    lines.append(f"*Zone {z_idx}: Không có")
+                    continue
+                    
+                pnp_nums = []
+                other_pos = []
+                for po in sorted(pos):
+                    po_u = po.strip().upper()
+                    if po_u.startswith("PNPP"):
+                        num_part = po_u[4:]
+                        pnp_nums.append(num_part)
+                    else:
+                        other_pos.append(po_u)
+                        
+                parts = []
+                if pnp_nums:
+                    parts.append(f"PNPP( {', '.join(pnp_nums)} )")
+                if other_pos:
+                    parts.extend(other_pos)
+                    
+                lines.append(f"*Zone {z_idx}: {', '.join(parts)}")
+            return "\n".join(lines)
+
+        no_new_cust_text = format_zone_zero_new_cust(zero_new_cust_by_zone)
+
+        # Calculate under-5 order post offices
+        under_5_pnp = []
+        under_5_prov = []
+        if target_po_col in df_target.columns:
+            po_order_counts = df_target[target_po_col].dropna().astype(str).str.strip().str.upper().value_counts().to_dict()
+        else:
+            po_order_counts = {}
+            
+        for po in monitored_sp_pos:
+            cnt = po_order_counts.get(po, 0)
+            if cnt > 0 and cnt < 5:
+                if po.startswith("PNPP"):
+                    under_5_pnp.append(po[4:])
+                elif po.startswith("PNP"):
+                    under_5_pnp.append(po[3:])
+                else:
+                    under_5_prov.append(po)
+                    
+        under_5_branches = sorted(zero_branch_names)
+            
+        initial_metrics = {
+            "total": total_target,
+            "diff_n1": diff,
+            "sp": count_sp,
+            "agent": count_agent,
+            "showroom": count_showroom,
+            "under_5_pnp": under_5_pnp,
+            "under_5_prov": under_5_prov,
+            "zero_pos": zero_sp_pos,
+            "under_5_branches": under_5_branches,
+            "lowest_showroom": [],
+            "lowest_agent": []
+        }
+        
+        time_str = datetime.now().strftime("%H:%M") if target_date == today else "23:59"
+        date_formatted = target_date.strftime("%d/%m")
+        report_text = format_daily_report_text(initial_metrics, target_date, cutoff_time)
+        
+        # Generate populated excel report
+        import io
+        template_dir = os.path.dirname(os.path.abspath(__file__))
+        template_files = [f for f in os.listdir(template_dir) if f.startswith("0.Master Daily Report") and f.endswith(".xlsx")]
+        
+        preferred_template = "0.Master Daily Report - new - Aug _ NEW  25.xlsx"
+        if os.path.exists(os.path.join(template_dir, preferred_template)):
+            template_name = preferred_template
+            template_path = os.path.join(template_dir, preferred_template)
+        elif template_files:
+            # Sort by version number
+            template_files.sort(key=lambda x: int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else 0, reverse=True)
+            template_path = os.path.join(template_dir, template_files[0])
+            template_name = template_files[0]
+        else:
+            template_name = "0.Master Daily Report - new - Aug.xlsx"
+            template_path = os.path.join(template_dir, template_name)
+            
+        if os.path.exists(template_path):
+            output_xlsx_name = f"Master_Daily_Report_{date_formatted.replace('/', '_')}_{time_str.replace(':', 'H')}.xlsx"
+            output_xlsx_path = os.path.join(tmpdir, output_xlsx_name)
+            
+            try:
+                msg = await edit_or_send_requester_text(msg, update, context, report_text + f"\n\nGenerating master Excel report using {template_name}...")
+                metrics = await asyncio.to_thread(build_master_daily_report_excel, template_path, src, output_xlsx_path, target_date, cutoff_time)
+                
+                if metrics:
+                    report_text = format_daily_report_text(metrics, target_date, cutoff_time)
+                
+                msg = await edit_or_send_requester_text(msg, update, context, report_text + "\n\nRendering report images...")
+                
+                # Render the reports
+                from excel_to_image import render_excel_reports
+                reports_map = await asyncio.to_thread(render_excel_reports, output_xlsx_path, target_date, tmpdir)
+                
+                # Send the generated reports in a swipeable Telegram album
+                from telegram import InputMediaPhoto
+                media_list = []
+                
+                report_order = [
+                    "sp_order_express_all", "day_report", "showroom_report", "agent_report",
+                    "customer_report", "zone_summary",
+                    "sp_zone_1", "sp_zone_1_prov", "sp_zone_2", "sp_zone_3_4", "sp_zone_5"
+                ]
+                captions = {
+                    "sp_order_express_all": f"📦 [SERVICE POINT] Report of Order Express ({date_formatted})",
+                    "day_report": f"📅 Bill Order - Day ({date_formatted})",
+                    "showroom_report": f"🏬 [SHOWROOM] Report of Order Express ({date_formatted})",
+                    "agent_report": f"🤝 [AGENT] Report of Order Express ({date_formatted})",
+                    "customer_report": f"👥 Báo cáo khách hàng mới ({date_formatted})",
+                    "zone_summary": f"📊 Báo cáo kết quả SXKD ({date_formatted})",
+                    "sp_zone_1": f"📍 Service Point Zone 1 (Phnom Penh) ({date_formatted})",
+                    "sp_zone_1_prov": f"📍 Service Point Zone 1 (Province) ({date_formatted})",
+                    "sp_zone_2": f"📍 Service Point Zone 2 ({date_formatted})",
+                    "sp_zone_3_4": f"📍 Service Point Zone 3 & 4 ({date_formatted})",
+                    "sp_zone_5": f"📍 Service Point Zone 5 ({date_formatted})"
+                }
+                
+                for rep_name in report_order:
+                    if rep_name in reports_map and os.path.exists(reports_map[rep_name]):
+                        with open(reports_map[rep_name], "rb") as f:
+                            photo_data = f.read()
+                            media_list.append(InputMediaPhoto(io.BytesIO(photo_data), caption=captions.get(rep_name, "")))
+                            
+                if media_list:
+                    # Telegram supports up to 10 photos per media group
+                    for chunk_idx in range(0, len(media_list), 10):
+                        chunk = media_list[chunk_idx:chunk_idx+10]
+                        await send_requester_media_group(update, context, chunk)
+                    
+                # Send the Excel file
+                with open(output_xlsx_path, "rb") as f:
+                    await send_requester_document(
+                        update, context, f,
+                        output_xlsx_name,
+                        caption=f"📊 Master Daily Excel {date_formatted} {time_str}"
+                    )
+                await edit_or_send_requester_text(msg, update, context, report_text)
+            except Exception as exc:
+                log.exception("Error generating populated master Excel")
+                await edit_or_send_requester_text(msg, update, context, report_text + f"\n\n⚠️ Error generating Excel/Image: {exc}")
+        else:
+            log.warning(f"Template not found at {template_path}")
+            await edit_or_send_requester_text(msg, update, context, report_text + "\n\n⚠️ Note: Master Daily Report template was not found, so no Excel file was attached.")
+        
+    except Exception as e:
+        log.exception("Error in /dailyreport")
+        await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -4807,42 +5807,9 @@ def main():
         log.info("Using proxy: %s", proxy_url)
 
     app = builder.build()
-    app.add_handler(CommandHandler("app",        cmd_app))
-    app.add_handler(CommandHandler("push",       run_push))
-    app.add_handler(CommandHandler("total",      cmd_total))
-    app.add_handler(CommandHandler("vs",         cmd_vs))
-    app.add_handler(CommandHandler("vs2",        cmd_vs2))
-    app.add_handler(CommandHandler("help",       cmd_help))
-    app.add_handler(CommandHandler("pause",      cmd_pause))
-    app.add_handler(CommandHandler("resume",     cmd_resume))
-    app.add_handler(CommandHandler("status",     cmd_status))
-    app.add_handler(CommandHandler("statues",    cmd_statues))
-    app.add_handler(CommandHandler("statuses",   cmd_statues))
-    app.add_handler(CommandHandler("mode",       cmd_mode))
-    app.add_handler(CommandHandler("register",   cmd_register))
-    app.add_handler(CommandHandler("unregister", cmd_unregister))
-    app.add_handler(CommandHandler("groups",     cmd_groups))
-    app.add_handler(CommandHandler("export",     cmd_export))
-    app.add_handler(CommandHandler("find",       cmd_find))
-    app.add_handler(CommandHandler("ask",        cmd_ask))
-    app.add_handler(CommandHandler("check",      cmd_check))
-    app.add_handler(CommandHandler("qr",         cmd_qr))
-    app.add_handler(CommandHandler("trace",      cmd_trace))
-    app.add_handler(CommandHandler("add",        cmd_add))
-    app.add_handler(CommandHandler("remove",     cmd_remove))
-    app.add_handler(CommandHandler("del",        cmd_remove))
-    app.add_handler(CommandHandler("list",       cmd_list))
-    app.add_handler(CommandHandler("testbill",   cmd_add)) # fallback
-    app.add_handler(CommandHandler("delay",      cmd_delay))
-    app.add_handler(CommandHandler("undelay",    cmd_undelay))
-    app.add_handler(CommandHandler("delaylist",  cmd_delaylist))
-    app.add_handler(CommandHandler("clean",      cmd_clean))
-    app.add_handler(CommandHandler("report",     cmd_report))
-    app.add_handler(CommandHandler("deletereport", cmd_delete_report))
-    app.add_handler(CommandHandler("delreport",    cmd_delete_report))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    app.add_handler(CommandHandler("dailyreport", cmd_daily_report))
 
-    log.info("Bot running. Commands: push, /total, /vs, /vs2, /export, /find, /ask, /check, /trace, /statues, /help, /pause, /resume, /status, /mode, /register, /groups, /add, /remove, /list, /delay, /undelay, /delaylist, /clean, /qr, /deletereport")
+    log.info("Bot running. Commands: push, /total, /vs, /vs2, /export, /find, /ask, /check, /trace, /statues, /help, /pause, /resume, /status, /mode, /register, /groups, /add, /remove, /list, /delay, /undelay, /delaylist, /clean, /qr, /deletereport, /dailyreport")
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
