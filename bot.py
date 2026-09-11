@@ -5059,9 +5059,9 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
         t_date = target_date.date() if isinstance(target_date, datetime) else target_date
         serial_date = (t_date - date(1899, 12, 30)).days
         
-        # 1. Update Date and Cutoff in Zone_Report (C1, C2)
+        # 1. Update Date and Cutoff in ZONE (C1, C2)
         try:
-            ws_zone = wb.Worksheets("Zone_Report")
+            ws_zone = wb.Worksheets("ZONE")
             ws_zone.Cells(1, 3).Value = serial_date
             ws_zone.Cells(1, 3).NumberFormat = "yyyy-mm-dd"
             ws_zone.Cells(2, 3).Value = cutoff_time.strftime("%H:%M:%S")
@@ -5106,9 +5106,9 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                     ws_rev.Range(ws_rev.Cells(len(rows_data) + 2, 1), ws_rev.Cells(old_last, 40)).Value = None
         except Exception as e:
             import logging
-        # Ensure Zone_Report customer analysis rows (U175:Y{last_r}) have live formulas
+        # Ensure ZONE customer analysis rows (U175:Y{last_r}) have live formulas
         try:
-            ws_z = wb.Worksheets("Zone_Report")
+            ws_z = wb.Worksheets("ZONE")
             last_cust_r = ws_z.Cells(ws_z.Rows.Count, "R").End(-4162).Row # xlUp
             if last_cust_r >= 175:
                 ws_z.Range(f"U175:Y{last_cust_r}").Formula = ws_z.Range("U175:Y175").Formula
