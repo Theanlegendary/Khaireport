@@ -431,6 +431,9 @@ async def safe_api_call(func, *args, **kwargs):
             log.warning(f"Flood control exceeded. Waiting for {wait_time} seconds before retrying (attempt {attempt + 1})...")
             await asyncio.sleep(wait_time + 1)
         except NetworkError as e:
+            if is_doc and "timed out" in str(e).lower():
+                log.warning(f"Document upload timed out on client ({e}). Not retrying to prevent sending duplicate files.")
+                return None
             log.warning(f"Network error: {e}. Retrying in 3 seconds (attempt {attempt + 1})...")
             await asyncio.sleep(3)
             _reset_io_buffers(args, kwargs)
@@ -681,6 +684,9 @@ async def send_requester_document(
             document=document,
             filename=filename,
             caption=caption,
+            read_timeout=180,
+            write_timeout=180,
+            connect_timeout=60,
         )
         return True
     except Exception as e:
@@ -4824,7 +4830,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
 
 
-def build_master_daily_report_excel(template_path, raw_excel_path, output_path, target_date, cutoff_time):
+def build_master_daily_report_excel(template_path, raw_excel_path, output_path, target_date, cutoff_time, new_cust_excel_path=None):
     import win32com.client
     import os
     import pandas as pd
@@ -5032,6 +5038,7 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
     # Copy template to output path
     shutil.copy2(template_path, output_path)
     
+    print("[DEBUG] Starting Excel COM initialization...", flush=True)
     import pythoncom
     pythoncom.CoInitialize()
     
@@ -5054,69 +5061,143 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
             pass
             
         abs_output_path = os.path.abspath(output_path)
-        wb = excel.Workbooks.Open(abs_output_path)
+        print(f"[DEBUG] Opening Workbook: {abs_output_path}", flush=True)
+        try:
+            wb = excel.Workbooks.Open(abs_output_path)
+        except Exception:
+            wb = excel.Workbooks.Open(abs_output_path, 0, False, 5, '', '', True, 1, '', True, False, 0, False, 1, 1)
         
+        try:
+            excel.Calculation = -4135 # xlCalculationManual
+        except Exception:
+            pass
+
+        print("[DEBUG] Updating Date and Cutoff time in worksheets...", flush=True)
         t_date = target_date.date() if isinstance(target_date, datetime) else target_date
         serial_date = (t_date - date(1899, 12, 30)).days
         
-        # 1. Update Date and Cutoff in ZONE (C1, C2)
-        try:
-            ws_zone = wb.Worksheets("ZONE")
-            ws_zone.Cells(1, 3).Value = serial_date
-            ws_zone.Cells(1, 3).NumberFormat = "yyyy-mm-dd"
-            ws_zone.Cells(2, 3).Value = cutoff_time.strftime("%H:%M:%S")
-        except Exception:
-            pass
+        time_serial = (cutoff_time.hour * 3600 + cutoff_time.minute * 60 + cutoff_time.second) / 86400.0
+        
+        # 1. Update Date and Cutoff in ZONE / 5 Zone (C1, C2)
+        for zname in ["ZONE", "5 Zone", "Zone_Report"]:
+            try:
+                ws_z = wb.Worksheets(zname)
+                ws_z.Cells(1, 3).Value = serial_date
+                ws_z.Cells(1, 3).NumberFormat = "yyyy-mm-dd"
+                ws_z.Cells(2, 3).Value = time_serial
+                ws_z.Cells(2, 3).NumberFormat = "hh:mm:ss"
+            except Exception:
+                pass
             
-        # Update Date and Cutoff in Province_Report, Showroom_RP, Agent_RP
-        for name in ["Province_Report", "Province_Report (2)", "Showroom_RP", "Agent_RP"]:
+        # Update Date and Cutoff in Province_Report, MF_Express, Showroom_RP, Agent_RP, Sản lượng ngày
+        for name in ["Province_Report", "Province_Report (2)", "MF_Express", "Showroom_RP", "Agent_RP", "Sản lượng ngày"]:
             try:
                 ws = wb.Worksheets(name)
                 ws.Cells(1, 2).Value = serial_date
                 ws.Cells(1, 2).NumberFormat = "yyyy-mm-dd"
-                ws.Cells(2, 2).Value = cutoff_time.strftime("%H:%M:%S")
-                
-                # Robust day target formula covering all 31 days (Days 1..13 fallback to Column I)
-                if "Province_Report" in name:
-                    for r in range(8, 45):
-                        po_code = ws.Cells(r, 2).Text.strip()
-                        if not po_code or r in (7, 22):
-                            continue
-                        ws.Cells(r, 10).Formula = (
-                            f"=IFERROR("
-                            f"INDEX('Day target'!$M$44:$AD$79, MATCH(Province_Report!$B{r},'Day target'!$C$44:$C$79,0), MATCH($C$1,'Day target'!$M$41:$AD$41,0)), "
-                            f"INDEX('Day target'!$I$44:$I$79, MATCH(Province_Report!$B{r},'Day target'!$C$44:$C$79,0))"
-                            f")"
-                        )
+                ws.Cells(2, 2).Value = time_serial
+                ws.Cells(2, 2).NumberFormat = "hh:mm:ss"
             except Exception:
                 pass
-                
+
+        # Update SP_RP T5 and U5 so COUNTIFS matches real dates in Data new Customer
+        # Write direct date serial values (not TEXT formulas) so COUNTIFS can match
+        try:
+            ws_sp = wb.Worksheets("SP_RP")
+            # T5 = yesterday (serial_date - 1), U5 = day before yesterday (serial_date - 2)
+            t5_serial = serial_date - 1
+            u5_serial = serial_date - 2
+            ws_sp.Range("T5").Value = t5_serial
+            ws_sp.Range("T5").NumberFormat = "dd/mm"
+            ws_sp.Range("U5").Value = u5_serial
+            ws_sp.Range("U5").NumberFormat = "dd/mm"
+            print(f"[DEBUG] SP_RP T5={t5_serial} U5={u5_serial} (date serials for dd/mm display)", flush=True)
+        except Exception as e:
+            print(f"[DEBUG] Failed to update SP_RP T5/U5: {e}", flush=True)
+
+        # Freeze Target historical August baselines (B35:B70 and G35:G70) so recalculation never causes #DIV/0!
+        try:
+            ws_t = wb.Worksheets("Target")
+            ws_t.Range("B35:B70").Value = ws_t.Range("B35:B70").Value
+            ws_t.Range("G35:G70").Value = ws_t.Range("G35:G70").Value
+        except Exception:
+            pass
+
         # 2. Write to Data Revenue sheet
         try:
+            print("[DEBUG] Writing Data Revenue block data...", flush=True)
             ws_rev = wb.Worksheets("Data Revenue")
+            # Find the actual used row count instead of clearing 150,000 rows
+            try:
+                last_rev_r = ws_rev.Cells(ws_rev.Rows.Count, "R").End(-4162).Row # xlUp
+            except Exception:
+                last_rev_r = 50000
+            clear_up_to = max(last_rev_r + 100, len(rows_data) + 100, 2)
+            ws_rev.Range(f"A2:AN{clear_up_to}").ClearContents()
             
             if rows_data:
                 # Write in single block assignment
                 rng_write = ws_rev.Range(ws_rev.Cells(2, 1), ws_rev.Cells(len(rows_data) + 1, 40))
                 rng_write.Value = tuple(tuple(r) for r in rows_data)
-                
-                # Clear leftover old rows if previous data was longer
-                old_last = ws_rev.Cells(ws_rev.Rows.Count, "AA").End(-4162).Row
-                if old_last > len(rows_data) + 1:
-                    ws_rev.Range(ws_rev.Cells(len(rows_data) + 2, 1), ws_rev.Cells(old_last, 40)).Value = None
+                print(f"[DEBUG] Successfully wrote {len(rows_data)} rows into Data Revenue!", flush=True)
         except Exception as e:
             import logging
-        # Ensure ZONE customer analysis rows (U175:Y{last_r}) have live formulas
-        try:
-            ws_z = wb.Worksheets("ZONE")
-            last_cust_r = ws_z.Cells(ws_z.Rows.Count, "R").End(-4162).Row # xlUp
-            if last_cust_r >= 175:
-                ws_z.Range(f"U175:Y{last_cust_r}").Formula = ws_z.Range("U175:Y175").Formula
-        except Exception:
-            pass
+            logging.exception("Error writing Data Revenue")
+
+        # 2b. Write to Data new Customer sheet
+        if new_cust_excel_path and os.path.exists(new_cust_excel_path):
+            try:
+                print(f"[DEBUG] Writing Data new Customer from {new_cust_excel_path}...", flush=True)
+                ws_nc = wb.Worksheets("Data new Customer")
+                df_nc = pd.read_excel(new_cust_excel_path)
+                df_nc = df_nc.fillna("")
+                parsed_dates = pd.to_datetime(df_nc.iloc[:, 3], dayfirst=True, format="mixed", errors="coerce")
+                rows_nc = [list(r) for r in df_nc.values]
+                n_rows = len(rows_nc)
+                if n_rows > 0:
+                    last_nc_r = max(ws_nc.UsedRange.Rows.Count, n_rows + 10)
+                    ws_nc.Range(f"A2:Z{last_nc_r}").ClearContents()
+
+                    # Write H2:Z (the 19 exported columns)
+                    rng_h = ws_nc.Range(ws_nc.Cells(2, 8), ws_nc.Cells(n_rows + 1, 26))
+                    rng_h.Value = tuple(tuple(r) for r in rows_nc)
+
+                    # Prepare computed columns A to G directly
+                    cols_a_g = []
+                    for idx, (dt, row) in enumerate(zip(parsed_dates, rows_nc)):
+                        r = idx + 2
+                        m = int(dt.month) if pd.notna(dt) else 9
+                        y = int(dt.year) if pd.notna(dt) else 2026
+                        d = int(dt.day) if pd.notna(dt) else 1
+                        
+                        b_formula = f"=DATE({y},{m},{d})"
+                        c_formula = f"=VLOOKUP(O{r},'Tham chiếu'!$S$2:$X$26,6,FALSE)"
+                        d_formula = f'=IFERROR(VALUE(RIGHT(VALUE(V{r}),LEN(V{r})-FIND("855",V{r},1)-2)), "")'
+                        e_formula = f"=MID(P{r},4,1)"
+                        f_formula = f'=IF(M{r}<>"","done","not yet")'
+                        g_formula = f"=COUNTIFS('Data Revenue'!$A:$A,'Data new Customer'!A{r},'Data Revenue'!$O:$O,'Data new Customer'!D{r})"
+                        
+                        cols_a_g.append([m, b_formula, c_formula, d_formula, e_formula, f_formula, g_formula])
+
+                    # Write A to G in single block
+                    rng_ag = ws_nc.Range(ws_nc.Cells(2, 1), ws_nc.Cells(n_rows + 1, 7))
+                    rng_ag.Value = tuple(tuple(row) for row in cols_a_g)
+                    print(f"[DEBUG] Successfully wrote {n_rows} rows into Data new Customer!", flush=True)
+            except Exception as e:
+                import logging
+                logging.exception("Error writing Data new Customer")
 
         # Recalculate
-        excel.CalculateFull()
+        try:
+            print("[DEBUG] Recalculating workbook formulas...", flush=True)
+            excel.Calculation = -4105 # xlCalculationAutomatic
+            excel.Calculate()
+            print("[DEBUG] Workbook recalculated!", flush=True)
+        except Exception:
+            try:
+                excel.Calculate()
+            except Exception:
+                pass
         
         # Extract exact values directly from calculated sheets
         metrics = None
@@ -5125,97 +5206,125 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
             ws_sr = wb.Worksheets("Showroom_RP")
             ws_ar = wb.Worksheets("Agent_RP")
             
-            total_val = int(float(ws_p.Range("AG6").Value or 0))
-            diff_val = int(float(ws_p.Range("AI6").Value or 0))
-            sp_val = int(float(ws_p.Range("AL6").Value or 0))
-            agent_val = int(float(ws_p.Range("AQ6").Value or 0))
-            sr_val = int(float(ws_p.Range("AV6").Value or 0))
+            def _safe_int(val):
+                try:
+                    return int(float(val or 0))
+                except Exception:
+                    return 0
+
+            total_val = _safe_int(ws_p.Range("AG6").Value)
+            diff_val = _safe_int(ws_p.Range("AI6").Value)
+            sp_val = _safe_int(ws_p.Range("AL6").Value)
+            agent_val = _safe_int(ws_p.Range("AP6").Value)
+            sr_val = _safe_int(ws_p.Range("AT6").Value)
             
-            under_5_pnp = []
-            under_5_prov = []
-            zero_pos = []
-            
-            for r in range(8, 45):
-                po_code = str(ws_p.Cells(r, 2).Value or '').strip().upper()
-                if not po_code or len(po_code) <= 3 or r in (7, 22):
+            zero_pnp = []      # PNP SPs with 0 inday orders → suffix numbers like "001", "003"
+            zero_prov = []     # Non-PNP SPs with 0 inday orders → full code like "KANP001"
+            zero_pos = []      # kept for backward compat (all zero-order SPs combined)
+            po_regex = re.compile(r'^[A-Z]{3,4}P\d{3}$')
+
+            for r in range(8, 44):
+                try:
+                    po_code = str(ws_p.Cells(r, 2).Value or '').strip().upper()
+                except Exception:
+                    po_code = ''
+                if not po_regex.match(po_code):
                     continue
                 try:
-                    orders = int(float(ws_p.Cells(r, 11).Value or 0)) # Col K
+                    orders = int(float(ws_p.Cells(r, 11).Value or 0))  # Col K: Inday orders
                 except Exception:
                     orders = 0
                 if orders == 0:
                     zero_pos.append(po_code)
-                elif orders < 5:
-                    if po_code.startswith("PNP"):
-                        num_part = po_code.replace("PNPP", "").replace("PNP", "")
-                        under_5_pnp.append(num_part)
+                    if po_code.startswith("PNPP"):
+                        zero_pnp.append(po_code[4:])  # e.g. "001"
+                    elif po_code.startswith("PNP"):
+                        zero_pnp.append(po_code[3:])  # fallback
                     else:
-                        under_5_prov.append(po_code)
+                        zero_prov.append(po_code)
                         
-            under_5_branches = []
-            for r in range(7, 29):
-                b_name = str(ws_p.Cells(r, 29).Value or '').strip()
-                if not b_name:
-                    continue
+            zero_branches = []
+            for r in range(9, 31):
                 try:
-                    b_orders = int(float(ws_p.Cells(r, 33).Value or 0))
+                    b_name = str(ws_p.Cells(r, 2).Value or '').strip()  # Col B: Branch Name
+                    b_orders = int(float(ws_p.Cells(r, 5).Value or 0))  # Col E: Inday Result bill
                 except Exception:
+                    b_name = ''
                     b_orders = 0
-                if b_orders < 5:
-                    under_5_branches.append(b_name)
+                if b_name and b_orders == 0:
+                    zero_branches.append(b_name)
+            # Keep under_5_branches for any other usage
+            under_5_branches = zero_branches
                     
             lowest_sr = []
             for r in range(6, 28):
-                b_name = str(ws_sr.Cells(r, 4).Value or '').strip()
-                if not b_name:
-                    continue
                 try:
-                    sr_orders = int(float(ws_sr.Cells(r, 12).Value or 0))
-                    sr_target = int(float(ws_sr.Cells(r, 11).Value or 0))
-                    comp = float(ws_sr.Cells(r, 13).Value or 0)
+                    b_name = str(ws_sr.Cells(r, 4).Value or '').strip() # Col D: Branch
+                    sr_orders = int(float(ws_sr.Cells(r, 12).Value or 0)) # Col L: Inday order
                 except Exception:
-                    sr_orders, sr_target, comp = 0, 0, 0.0
-                if sr_orders == 0 or (sr_target > 0 and comp < 1.0):
-                    lowest_sr.append(b_name)
+                    b_name = ''
+                    sr_orders = 0
+                if b_name and sr_orders < 5:
+                    lowest_sr.append(f"{b_name} ({sr_orders})")
                     
             lowest_agent = []
             for r in range(6, 28):
-                b_name = str(ws_ar.Cells(r, 4).Value or '').strip()
-                if not b_name:
-                    continue
                 try:
-                    ag_orders = int(float(ws_ar.Cells(r, 12).Value or 0))
-                    ag_target = int(float(ws_ar.Cells(r, 11).Value or 0))
-                    comp = float(ws_ar.Cells(r, 13).Value or 0)
+                    b_name = str(ws_ar.Cells(r, 4).Value or '').strip() # Col D: Branch
+                    ag_orders = int(float(ws_ar.Cells(r, 12).Value or 0)) # Col L: Inday order
                 except Exception:
-                    ag_orders, ag_target, comp = 0, 0, 0.0
-                if ag_orders == 0 or (ag_target > 0 and comp < 1.0):
-                    lowest_agent.append(b_name)
+                    b_name = ''
+                    ag_orders = 0
+                if b_name and ag_orders < 5:
+                    lowest_agent.append(f"{b_name} ({ag_orders})")
                     
+            # New Customer metrics from Province_Report Row 65 (Metfone Express total)
+            nc_month = _safe_int(ws_p.Range("E65").Value)
+            nc_inday = _safe_int(ws_p.Range("G65").Value)
+            nc_orders_month = _safe_int(ws_p.Range("I65").Value)
+            nc_orders_inday = _safe_int(ws_p.Range("K65").Value)
+            try:
+                nc_comp_pct = round(float(ws_p.Range("F65").Value or 0) * 100, 1)
+            except Exception:
+                nc_comp_pct = 0.0
+
             metrics = {
                 "total": total_val,
                 "diff_n1": diff_val,
                 "sp": sp_val,
                 "agent": agent_val,
                 "showroom": sr_val,
-                "under_5_pnp": under_5_pnp,
-                "under_5_prov": under_5_prov,
+                "zero_pnp": zero_pnp,
+                "zero_prov": zero_prov,
                 "zero_pos": zero_pos,
                 "under_5_branches": under_5_branches,
                 "lowest_showroom": lowest_sr,
-                "lowest_agent": lowest_agent
+                "lowest_agent": lowest_agent,
+                "new_cust_month": nc_month,
+                "new_cust_inday": nc_inday,
+                "new_cust_orders_month": nc_orders_month,
+                "new_cust_orders_inday": nc_orders_inday,
+                "new_cust_comp_pct": nc_comp_pct,
             }
         except Exception:
             import logging
             logging.exception("Error extracting metrics from Excel")
             
-        wb.Save()
+        print("[DEBUG] Saving populated workbook...", flush=True)
+        try:
+            wb.Save()
+        except Exception:
+            try:
+                wb.SaveAs(abs_output_path, 51)
+            except Exception:
+                pass
+        print("[DEBUG] Workbook save complete, returning metrics!", flush=True)
         return metrics
         
     finally:
         if wb:
             try:
-                wb.Close(SaveChanges=True)
+                wb.Close(SaveChanges=False)
             except Exception:
                 pass
         if excel:
@@ -5237,68 +5346,150 @@ def format_daily_report_text(metrics: dict, target_date, cutoff_time) -> str:
     total = metrics.get("total", 0)
     diff = metrics.get("diff_n1", 0)
     if diff < 0:
-        diff_text = f"giảm  {-diff}  đơn"
+        diff_text = f"giảm {-diff}  đơn"
     elif diff > 0:
-        diff_text = f"tăng  {diff}  đơn"
+        diff_text = f"tăng {diff}  đơn"
     else:
-        diff_text = "bằng  0  đơn"
+        diff_text = "bằng 0  đơn"
         
     sp_count = metrics.get("sp", 0)
     agent_count = metrics.get("agent", 0)
     sr_count = metrics.get("showroom", 0)
     
-    under_5_pnp = metrics.get("under_5_pnp", [])
-    under_5_prov = metrics.get("under_5_prov", [])
-    zero_pos = metrics.get("zero_pos", [])
+    # Zero-order service points
+    zero_pnp = metrics.get("zero_pnp", [])
+    zero_prov = metrics.get("zero_prov", [])
+    total_zero_pos = len(zero_pnp) + len(zero_prov)
     
-    total_low_pos = len(under_5_pnp) + len(under_5_prov) + len(zero_pos)
+    # Zero-order branches
+    zero_branches = metrics.get("under_5_branches", [])
     
     lines = [
-        f"📦 BÁO CÁO SẢN LƯỢNG CẬP NHẬT ĐẾN HIỆN TẠI {date_formatted}-{time_str}\n",
-        "Báo cáo PTGĐ Anh @Trungnh2 và các anh GĐCN, GĐV @everyone PKD kính gửi kết quả sản lượng cập nhật đến hiện tại:",
-        f"Tổng sản lượng: {total} đơn,  {diff_text} so với cùng kỳ ngày hôm trước.\n",
+        f"📦 BÁO CÁO SẢN LƯỢNG CẬP NHẬT ĐẾN HIỆN TẠI {date_formatted}-{time_str}",
+        f"Báo cáo PTGĐ Anh @Trungnh2 và các anh GĐCN @everyone PKD kính gửi kết quả sản lượng cập nhật mới nhất:",
+        f"Tổng sản lượng: {total} đơn, {diff_text} so với cùng kỳ hôm  trước.   ",
         "📌 Xét theo kênh:",
-        f"Service Point: {sp_count} đơn",
-        f"Đại lý: {agent_count} đơn",
-        f"Showroom: {sr_count} đơn\n",
+        f"*Service Point: {sp_count} đơn",
+        f"*Đại lý: {agent_count} đơn",
+        f"*Showroom: {sr_count} đơn   ",
     ]
     
-    lines.append(f"📌{total_low_pos} Bưu cục  phát sinh dưới 5 đơn:")
-    if under_5_pnp:
-        lines.append(f"PNPP({', '.join(sorted(under_5_pnp))})")
-    for po in sorted(under_5_prov):
+    # New Customers section
+    nc_inday = metrics.get("new_cust_inday", 0)
+    nc_month = metrics.get("new_cust_month", 0)
+    nc_orders_inday = metrics.get("new_cust_orders_inday", 0)
+    nc_comp = metrics.get("new_cust_comp_pct", 0.0)
+
+    if nc_month > 0 or nc_inday > 0:
+        lines.append("  ")
+        lines.append("📌 Khách hàng mới:")
+        if nc_orders_inday > 0:
+            lines.append(f"*Trong ngày: {nc_inday} KH ({nc_orders_inday} đơn)")
+        else:
+            lines.append(f"*Trong ngày: {nc_inday} KH")
+        if nc_comp > 0:
+            lines.append(f"*Lũy kế tháng: {nc_month:,} KH (Đạt {nc_comp}%)".replace(",", "."))
+        else:
+            lines.append(f"*Lũy kế tháng: {nc_month:,} KH".replace(",", "."))
+
+    lines.append("  ")
+    lines.append(f"📌 {total_zero_pos} Bưu cục chưa phát sinh đơn:")
+    if zero_pnp:
+        lines.append(f"PNPP({', '.join(zero_pnp)})")
+    for po in zero_prov:
         lines.append(f"+{po}")
-    for po in sorted(zero_pos):
-        lines.append(f"+{po} Chưa phát sinh đơn")
-    if total_low_pos == 0:
+    if total_zero_pos == 0:
         lines.append("Không có")
-    lines.append("")
+    lines.append("  ")
     
-    under_5_branches = metrics.get("under_5_branches", [])
-    lines.append(f"📌{len(under_5_branches)} chi nhánh  phát sinh dưới 5 đơn:")
-    if under_5_branches:
-        for b_name in under_5_branches:
+    lines.append(f"📌 {len(zero_branches)} Chi nhánh chưa phát sinh đơn:")
+    if zero_branches:
+        for b_name in zero_branches:
             lines.append(f"+{b_name}")
     else:
         lines.append("Không có")
-    lines.append("")
+    lines.append("  ")
     
-    lowest_sr = metrics.get("lowest_showroom", [])
-    if lowest_sr:
-        lines.append(f"📌{len(lowest_sr)} chi nhánh  phát sinh thấp nhất  kênh Showroom :")
-        for b_name in lowest_sr:
-            lines.append(f"+{b_name}")
-        lines.append("")
-        
-    lowest_agent = metrics.get("lowest_agent", [])
-    if lowest_agent:
-        lines.append(f"📌{len(lowest_agent)} chi nhánh  phát sinh thấp nhất  kênh Đại lý :")
-        for b_name in lowest_agent:
-            lines.append(f"+{b_name}")
-        lines.append("")
-        
     lines.append("Trân trọng.")
     return "\n".join(lines)
+
+
+async def forward_daily_report_to_group(
+    context: ContextTypes.DEFAULT_TYPE,
+    target_group_id: int,
+    reports_map: dict = None,
+    report_order: list = None,
+    captions: dict = None,
+    output_xlsx_path: str = None,
+    output_xlsx_name: str = None,
+    caption_excel: str = None,
+    report_text: str = None,
+):
+    """Forward generated daily report artifacts to the specified group chat ID."""
+    if not target_group_id:
+        return
+    sender_bot = get_group_sender_bot(context)
+    if not sender_bot:
+        log.warning("Cannot forward daily report to group %s: sender_bot not available", target_group_id)
+        return
+
+    log.info("Forwarding daily report to group %s...", target_group_id)
+    import io
+
+    # 1. Forward report text summary FIRST so group sees executive figures immediately
+    if report_text:
+        try:
+            for i in range(0, len(report_text), 4000):
+                await safe_api_call(
+                    sender_bot.send_message,
+                    chat_id=target_group_id,
+                    text=report_text[i:i+4000],
+                )
+                await asyncio.sleep(0.3)
+        except Exception as e:
+            log.warning("Failed forwarding daily report text to %s: %s", target_group_id, e)
+
+    # 2. Forward swipeable album of rendered images (if available)
+    if reports_map and report_order:
+        try:
+            from telegram import InputMediaPhoto
+            group_media = []
+            for rep_name in report_order:
+                img_path = reports_map.get(rep_name)
+                if img_path and os.path.exists(img_path):
+                    with open(img_path, "rb") as f:
+                        img_bytes = f.read()
+                        group_media.append(
+                            InputMediaPhoto(
+                                io.BytesIO(img_bytes),
+                                caption=(captions or {}).get(rep_name, "")
+                            )
+                        )
+            if group_media:
+                for chunk_idx in range(0, len(group_media), 10):
+                    chunk = group_media[chunk_idx:chunk_idx+10]
+                    await safe_api_call(sender_bot.send_media_group, chat_id=target_group_id, media=chunk)
+                    await asyncio.sleep(0.5)
+        except Exception as e:
+            log.warning("Failed forwarding daily report media album to %s: %s", target_group_id, e)
+
+    # 3. Forward populated Excel file (if available)
+    if output_xlsx_path and os.path.exists(output_xlsx_path):
+        try:
+            with open(output_xlsx_path, "rb") as f:
+                await safe_api_call(
+                    sender_bot.send_document,
+                    chat_id=target_group_id,
+                    document=f,
+                    filename=output_xlsx_name or os.path.basename(output_xlsx_path),
+                    caption=caption_excel or "📊 Master Daily Excel",
+                    read_timeout=180,
+                    write_timeout=180,
+                    connect_timeout=60,
+                )
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            log.warning("Failed forwarding daily report Excel document to %s: %s", target_group_id, e)
 
 
 @pm_required_handler
@@ -5306,6 +5497,9 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/dailyreport [date] — generate text daily report (volume, comparison, zero-order offices/branches), render screenshot image and send populated Master Daily Excel."""
     await delete_group_command(update, context)
     cfg = load_config()
+    target_groups = cfg.get("telegram", {}).get("daily_report_group_id", -5587688944)
+    if not isinstance(target_groups, list):
+        target_groups = [target_groups]
     
     # Parse optional date argument
     args = [a.strip() for a in (context.args or []) if a.strip()]
@@ -5357,6 +5551,19 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from_date=from_date_str,
             to_date=to_date_str
         )
+
+        # Download new customers report from API
+        new_cust_month_str = target_date.strftime("%Y-%m")
+        new_cust_path = os.path.join(tmpdir, f"export_new_customers_{new_cust_month_str}.xlsx")
+        try:
+            downloader.download_new_customers(
+                cfg["api"], new_cust_path,
+                month=new_cust_month_str,
+                force_refresh=True
+            )
+        except Exception as e:
+            log.warning(f"Failed to download new customers report: {e}")
+            new_cust_path = None
             
         # Parse Excel data
         import pandas as pd
@@ -5545,6 +5752,7 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         zero_branches = [b for b in BRANCH_NAMES.keys() if b not in active_branches]
         zero_branch_names = [BRANCH_NAMES[b] for b in zero_branches]
+        under_5_branches = zero_branch_names
         
         # Zero New Customer Inday calculation from real data
         df_target_new_cust = df_target[df_target.get('cum_count', 0) == 1] if 'cum_count' in df_target.columns else pd.DataFrame()
@@ -5607,20 +5815,35 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     under_5_prov.append(po)
                     
-        under_5_branches = sorted(zero_branch_names)
-            
+        # Compute preview new customer metrics from new_cust_path if available
+        init_nc_month = 0
+        init_nc_inday = 0
+        if new_cust_path and os.path.exists(new_cust_path):
+            try:
+                df_nc_preview = pd.read_excel(new_cust_path)
+                init_nc_month = len(df_nc_preview)
+                parsed_nc_dates = pd.to_datetime(df_nc_preview.iloc[:, 3], dayfirst=True, format="mixed", errors="coerce").dt.date
+                init_nc_inday = int((parsed_nc_dates == target_date).sum())
+            except Exception as e_nc:
+                log.warning(f"Could not compute preview new customer metrics: {e_nc}")
+
         initial_metrics = {
             "total": total_target,
             "diff_n1": diff,
             "sp": count_sp,
             "agent": count_agent,
             "showroom": count_showroom,
-            "under_5_pnp": under_5_pnp,
-            "under_5_prov": under_5_prov,
+            "zero_pnp": [po[4:] if po.startswith("PNPP") else po[3:] for po in zero_pnp],
+            "zero_prov": zero_province,
             "zero_pos": zero_sp_pos,
             "under_5_branches": under_5_branches,
             "lowest_showroom": [],
-            "lowest_agent": []
+            "lowest_agent": [],
+            "new_cust_month": init_nc_month,
+            "new_cust_inday": init_nc_inday,
+            "new_cust_orders_month": 0,
+            "new_cust_orders_inday": 0,
+            "new_cust_comp_pct": 0.0,
         }
         
         time_str = datetime.now().strftime("%H:%M") if target_date == today else "23:59"
@@ -5630,9 +5853,9 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Generate populated excel report
         import io
         template_dir = os.path.dirname(os.path.abspath(__file__))
-        template_files = [f for f in os.listdir(template_dir) if f.startswith("0.Master Daily Report") and f.endswith(".xlsx")]
+        template_files = [f for f in os.listdir(template_dir) if (f.startswith("0.Master Daily Report") or f.startswith("00.Master Daily Report")) and f.endswith(".xlsx")]
         
-        preferred_template = "0.Master Daily Report - new - Sept_New.xlsx"
+        preferred_template = "00.Master Daily Report - new - 1509.xlsx"
         if os.path.exists(os.path.join(template_dir, preferred_template)):
             template_name = preferred_template
             template_path = os.path.join(template_dir, preferred_template)
@@ -5651,7 +5874,7 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 msg = await edit_or_send_requester_text(msg, update, context, report_text + f"\n\nGenerating master Excel report using {template_name}...")
-                metrics = await asyncio.to_thread(build_master_daily_report_excel, template_path, src, output_xlsx_path, target_date, cutoff_time)
+                metrics = await asyncio.to_thread(build_master_daily_report_excel, template_path, src, output_xlsx_path, target_date, cutoff_time, new_cust_path)
                 
                 if metrics:
                     report_text = format_daily_report_text(metrics, target_date, cutoff_time)
@@ -5667,22 +5890,18 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_list = []
                 
                 report_order = [
-                    "sp_order_express_all", "day_report", "showroom_report", "agent_report",
-                    "customer_report", "zone_summary",
-                    "sp_zone_1", "sp_zone_1_prov", "sp_zone_2", "sp_zone_3_4", "sp_zone_5"
+                    "day_report",
+                    "sp_order_express_all",
+                    "agent_report",
+                    "showroom_report",
+                    "customer_report"
                 ]
                 captions = {
-                    "sp_order_express_all": f"📦 [SERVICE POINT] Report of Order Express ({date_formatted})",
                     "day_report": f"📅 Bill Order - Day ({date_formatted})",
-                    "showroom_report": f"🏬 [SHOWROOM] Report of Order Express ({date_formatted})",
+                    "sp_order_express_all": f"📦 [SERVICE POINT] Report of Order Express ({date_formatted})",
                     "agent_report": f"🤝 [AGENT] Report of Order Express ({date_formatted})",
-                    "customer_report": f"👥 Báo cáo khách hàng mới ({date_formatted})",
-                    "zone_summary": f"📊 Báo cáo kết quả SXKD ({date_formatted})",
-                    "sp_zone_1": f"📍 Service Point Zone 1 (Phnom Penh) ({date_formatted})",
-                    "sp_zone_1_prov": f"📍 Service Point Zone 1 (Province) ({date_formatted})",
-                    "sp_zone_2": f"📍 Service Point Zone 2 ({date_formatted})",
-                    "sp_zone_3_4": f"📍 Service Point Zone 3 & 4 ({date_formatted})",
-                    "sp_zone_5": f"📍 Service Point Zone 5 ({date_formatted})"
+                    "showroom_report": f"🏬 [SHOWROOM] Report of Order Express ({date_formatted})",
+                    "customer_report": f"👥 New Customer Report ({date_formatted})"
                 }
                 
                 for rep_name in report_order:
@@ -5704,13 +5923,52 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         output_xlsx_name,
                         caption=f"📊 Master Daily Excel {date_formatted} {time_str}"
                     )
-                await edit_or_send_requester_text(msg, update, context, report_text)
+                try:
+                    await safe_api_call(msg.delete)
+                except Exception:
+                    pass
+                await send_requester_text(update, context, report_text)
+                
+                # Forward to target registered group(s) (e.g. Chat ID: -5587688944)
+                for gid in target_groups:
+                    try:
+                        await forward_daily_report_to_group(
+                            context=context,
+                            target_group_id=int(gid),
+                            reports_map=reports_map,
+                            report_order=report_order,
+                            captions=captions,
+                            output_xlsx_path=output_xlsx_path,
+                            output_xlsx_name=output_xlsx_name,
+                            caption_excel=f"📊 Master Daily Excel {date_formatted} {time_str}",
+                            report_text=report_text,
+                        )
+                    except Exception as e_fwd:
+                        log.warning(f"Error forwarding daily report to group {gid}: {e_fwd}")
             except Exception as exc:
                 log.exception("Error generating populated master Excel")
                 await edit_or_send_requester_text(msg, update, context, report_text + f"\n\n⚠️ Error generating Excel/Image: {exc}")
+                for gid in target_groups:
+                    try:
+                        await forward_daily_report_to_group(
+                            context=context,
+                            target_group_id=int(gid),
+                            report_text=report_text + f"\n\n⚠️ Error generating Excel/Image: {exc}",
+                        )
+                    except Exception as e_fwd:
+                        log.warning(f"Error forwarding daily report to group {gid}: {e_fwd}")
         else:
             log.warning(f"Template not found at {template_path}")
             await edit_or_send_requester_text(msg, update, context, report_text + "\n\n⚠️ Note: Master Daily Report template was not found, so no Excel file was attached.")
+            for gid in target_groups:
+                try:
+                    await forward_daily_report_to_group(
+                        context=context,
+                        target_group_id=int(gid),
+                        report_text=report_text,
+                    )
+                except Exception as e_fwd:
+                    log.warning(f"Error forwarding daily report to group {gid}: {e_fwd}")
         
     except Exception as e:
         log.exception("Error in /dailyreport")

@@ -1,0 +1,132 @@
+═══════════════════════════════════════════════════════════════
+   📱 QUICK GUIDE: Register Telegram Groups for Bot Reports
+═══════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────┐
+│  METHOD 1: Simple Registration (Recommended)                │
+└─────────────────────────────────────────────────────────────┘
+
+Step 1: Add Bot to Group
+   • Open your Telegram group
+   • Tap group name → Add Members
+   • Search for your bot
+   • Add it to the group
+
+Step 2: Register the Group
+   • In the group chat, send: /register
+   
+Step 3: Confirmation
+   ✅ Bot replies: "Group registered for report forwards"
+   
+DONE! The group will now receive reports when you run "push"
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  SMART AUTO-DETECTION                                        │
+└─────────────────────────────────────────────────────────────┘
+
+If your group name contains a post office code, the bot 
+automatically knows what to send!
+
+Examples:
+   • Group: "PNPP014 Team"      → Gets PNPP014 reports
+   • Group: "KANP001 Updates"   → Gets KANP001 reports
+   • Group: "SIH Zone"          → Gets SIHP001 reports
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  USEFUL COMMANDS                                             │
+└─────────────────────────────────────────────────────────────┘
+
+/groups      → List all registered groups
+/register    → Register current group (in group chat)
+/unregister  → Remove current group (in group chat)
+/pause       → Stop forwarding to groups temporarily
+/resume      → Resume forwarding to groups
+/status      → Check if forwarding is active
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  TESTING                                                     │
+└─────────────────────────────────────────────────────────────┘
+
+Before broadcasting to groups:
+   • Send: /test
+   • Reports sent ONLY to you
+   • Groups don't receive anything
+   • Perfect for testing!
+
+When ready to broadcast:
+   • Send: push
+   • Reports sent to you AND registered groups
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  WHAT GROUPS RECEIVE                                         │
+└─────────────────────────────────────────────────────────────┘
+
+For specific handle groups (e.g., PNPP014):
+   📸 Report images for that handle
+   📄 Excel file (if >50 pending orders)
+   💬 Summary message
+
+For "all reports" groups:
+   📸 All report images
+   📊 Zone summaries
+   📄 Complete Excel file
+   💬 Full summary
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  EXAMPLE SETUP                                               │
+└─────────────────────────────────────────────────────────────┘
+
+1. Create groups:
+   • "PNPP001 Daily Reports"
+   • "PNPP002 Team"
+   • "Zone 1 Management"
+   • "All Reports - Admin"
+
+2. Add bot to each group
+
+3. In each group, send: /register
+
+4. Verify with: /groups
+   You'll see:
+   Registered groups:
+     • PNPP001 Daily Reports — -1001234567890
+     • PNPP002 Team — -1001234567891
+     • Zone 1 Management — -1001234567892
+     • All Reports - Admin — -1001234567893
+
+5. Configure handles (if needed):
+   • Edit config.json
+   • Add specific mappings
+   • Or let auto-detection work!
+
+6. Test: /test
+
+7. Go live: push
+
+
+┌─────────────────────────────────────────────────────────────┐
+│  TROUBLESHOOTING                                             │
+└─────────────────────────────────────────────────────────────┘
+
+❌ Group not receiving reports?
+   → Check: /status (is forwarding paused?)
+   → Check: /groups (is group registered?)
+   → Re-register: /register
+
+❌ Bot can't send to group?
+   → Make sure bot is still in the group
+   → Give bot "Send Messages" permission
+   → Re-add bot if removed
+
+❌ Want to remove a group?
+   → In that group: /unregister
+
+
+═══════════════════════════════════════════════════════════════
+                    Ready to Register! 🚀
+═══════════════════════════════════════════════════════════════

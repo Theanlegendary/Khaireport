@@ -117,14 +117,25 @@ def excel_to_image(xlsx_path: str) -> io.BytesIO:
     # ── Try Excel COM rendering first (for perfect Khmer text shaping and native styling on Windows) ──
     try:
         import win32com.client
+        import pythoncom
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
         import time
         import os
         from PIL import ImageGrab
         
         abs_path = os.path.abspath(xlsx_path)
         excel = win32com.client.Dispatch("Excel.Application")
-        excel.Visible = False
-        excel.DisplayAlerts = False
+        try:
+            excel.Visible = False
+        except Exception:
+            pass
+        try:
+            excel.DisplayAlerts = False
+        except Exception:
+            pass
         
         wb = None
         try:
@@ -456,10 +467,24 @@ def excel_to_image(xlsx_path: str) -> io.BytesIO:
     return buf
 
 
-def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
+def render_excel_reports(xlsx_path: str, target_date, out_dir: str, reports_to_include=None) -> dict:
     """
     Renders the required report screenshots from the populated Excel file using Excel COM.
     """
+    try:
+        from exporter import export_5_report_images
+        res = export_5_report_images(xlsx_path, out_dir)
+        return {
+            "day_report": res.get("img1"),
+            "sp_order_express_all": res.get("img2"),
+            "agent_report": res.get("img3"),
+            "showroom_report": res.get("img4"),
+            "customer_report": res.get("img5")
+        }
+    except Exception as e:
+        import logging
+        logging.exception(f"Direct exporter failed, falling back to legacy render: {e}")
+
     import pythoncom
     pythoncom.CoInitialize()
     import win32com.client
@@ -475,6 +500,11 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
     
     try:
         try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        try:
             excel = win32com.client.DispatchEx("Excel.Application")
         except Exception:
             excel = win32com.client.Dispatch("Excel.Application")
@@ -489,8 +519,14 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
         except Exception:
             pass
             
-        wb = excel.Workbooks.Open(abs_path)
-        excel.CalculateFull()
+        try:
+            wb = excel.Workbooks.Open(abs_path)
+        except Exception:
+            wb = excel.Workbooks.Open(abs_path, 0, False, 5, '', '', True, 1, '', True, False, 0, False, 1, 1)
+        try:
+            excel.Calculation = -4135 # xlCalculationManual: disable re-calculating 37MB file while copying ranges
+        except Exception:
+            pass
         
         # 1. Render Zone Summary (Single tight full-fit table: SẢN LƯỢNG NHẬN - NGÀY)
         try:
@@ -1139,12 +1175,20 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 "STUP001": (103, 23, 7, 183)
             }
             
+            def _to_f(val):
+                try:
+                    return float(val or 0)
+                except Exception:
+                    return 0.0
+
             matrix = []
             r0 = raw_data[0]
-            matrix.append(["MEC", "", "", "", 9346, r0[17], (r0[17] or 0)/9346, 2066, r0[18], (r0[18] or 0)/2066, 658, r0[19], (r0[19] or 0)/658, 7836, r0[20], (r0[20] or 0)/7836, r0[21] or 0])
+            v17_0, v18_0, v19_0, v20_0, v21_0 = _to_f(r0[17]), _to_f(r0[18]), _to_f(r0[19]), _to_f(r0[20]), _to_f(r0[21])
+            matrix.append(["MEC", "", "", "", 9346, v17_0, v17_0/9346, 2066, v18_0, v18_0/2066, 658, v19_0, v19_0/658, 7836, v20_0, v20_0/7836, v21_0])
             
             r1 = raw_data[1]
-            matrix.append(["I", "Phnompenh", "", "", 4312, r1[17], (r1[17] or 0)/4312, 952, r1[18], (r1[18] or 0)/952, 308, r1[19], (r1[19] or 0)/308, 3019, r1[20], (r1[20] or 0)/3019, r1[21] or 0])
+            v17_1, v18_1, v19_1, v20_1, v21_1 = _to_f(r1[17]), _to_f(r1[18]), _to_f(r1[19]), _to_f(r1[20]), _to_f(r1[21])
+            matrix.append(["I", "Phnompenh", "", "", 4312, v17_1, v17_1/4312, 952, v18_1, v18_1/952, 308, v19_1, v19_1/308, 3019, v20_1, v20_1/3019, v21_1])
             
             for r in raw_data[2:]:
                 no_val = r[0]
@@ -1161,11 +1205,11 @@ def render_excel_reports(xlsx_path: str, target_date, out_dir: str) -> dict:
                 zone_val = r[3]
                 
                 tg = station_targets.get(code_val, (257, 57, 18, 200))
-                c_res = r[17] or 0
-                c5_res = r[18] or 0
-                c20_res = r[19] or 0
-                new_res = r[20] or 0
-                new_day = r[21] or 0
+                c_res = _to_f(r[17])
+                c5_res = _to_f(r[18])
+                c20_res = _to_f(r[19])
+                new_res = _to_f(r[20])
+                new_day = _to_f(r[21])
                 
                 matrix.append([
                     no_val, code_val, name_val, zone_val,
