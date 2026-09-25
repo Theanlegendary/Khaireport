@@ -5096,7 +5096,8 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                 ws.Cells(1, 2).Value = serial_date
                 ws.Cells(1, 2).NumberFormat = "yyyy-mm-dd"
                 ws.Cells(2, 2).Value = time_serial
-                ws.Cells(2, 2).NumberFormat = "hh:mm:ss"
+                if "Province_Report" in name:
+                    ws.Range("A3").Formula = '="BUSINESS REPORT DATE "&TEXT(B1,"dd/mm - ")&TEXT(B2,"hh:mm")'
             except Exception:
                 pass
 
@@ -5348,7 +5349,12 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
 
 def format_daily_report_text(metrics: dict, target_date, cutoff_time) -> str:
     today = datetime.now().date()
-    time_str = datetime.now().strftime("%H:%M") if target_date == today else "23:59"
+    if cutoff_time:
+        time_str = cutoff_time.strftime("%H:%M")
+    elif target_date == today:
+        time_str = datetime.now().strftime("%H:%M")
+    else:
+        time_str = "23:59"
     date_formatted = target_date.strftime("%d/%m")
     
     total = metrics.get("total", 0)
@@ -5509,35 +5515,55 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not isinstance(target_groups, list):
         target_groups = [target_groups]
     
-    # Parse optional date argument
-    args = [a.strip() for a in (context.args or []) if a.strip()]
+    # Parse optional date and time argument
+    # Supports /dailyreport, /dailyreport 15:18, /dailyreport 25/09, /dailyreport 25/09 15:18, /dailyreport 25/09-15:18
+    raw_args = " ".join([a.strip() for a in (context.args or []) if a.strip()])
+    normalized = re.sub(r'(\d{1,2}/\d{1,2}(?:/\d{2,4})?)[-_](\d{1,2}:\d{2})', r'\1 \2', raw_args)
+    tokens = normalized.split()
+    
     target_date = None
+    cutoff_time = None
     today = datetime.now().date()
     
-    if args:
-        date_str = args[0]
-        # Support DD/MM, DD/MM/YYYY, YYYY-MM-DD
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m"):
+    for tok in tokens:
+        time_matched = False
+        for t_fmt in ("%H:%M:%S", "%H:%M", "%Hh%M", "%HH%M"):
             try:
-                dt = datetime.strptime(date_str, fmt)
-                if "%d/%m" in fmt:
-                    dt = dt.replace(year=today.year)
-                target_date = dt.date()
+                t_dt = datetime.strptime(tok, t_fmt)
+                cutoff_time = t_dt.time()
+                time_matched = True
                 break
             except ValueError:
-                continue
-        if target_date is None:
-            await private_or_current_reply(
-                update, context,
-                f"❌ Invalid date format: '{date_str}'.\n"
-                f"Please use DD/MM (e.g. 10/08), DD/MM/YYYY (e.g. 10/08/2026), or YYYY-MM-DD."
-            )
-            return
-    else:
+                pass
+        if time_matched:
+            continue
+            
+        date_matched = False
+        for d_fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m"):
+            try:
+                dt = datetime.strptime(tok, d_fmt)
+                if "%d/%m" in d_fmt:
+                    dt = dt.replace(year=today.year)
+                target_date = dt.date()
+                date_matched = True
+                break
+            except ValueError:
+                pass
+        if date_matched:
+            continue
+
+    if target_date is None:
         target_date = today
 
+    if cutoff_time is None:
+        if target_date == today:
+            cutoff_time = datetime.now().time()
+        else:
+            cutoff_time = time(23, 59, 59)
+
     date_display = target_date.strftime("%d/%m")
-    msg = await send_requester_text(update, context, f"Generating daily report for {date_display}...")
+    time_display = cutoff_time.strftime("%H:%M")
+    msg = await send_requester_text(update, context, f"Generating daily report for {date_display} - {time_display}...")
     
     tmpdir = tempfile.mkdtemp(prefix="daily_report_")
     track_report_dir(tmpdir)
@@ -5654,11 +5680,12 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             df_clean['cum_count'] = 1
         
-        # Determine cutoff time
-        if target_date == today:
-            cutoff_time = datetime.now().time()
-        else:
-            cutoff_time = datetime.max.time()
+        # Ensure cutoff time is set
+        if cutoff_time is None:
+            if target_date == today:
+                cutoff_time = datetime.now().time()
+            else:
+                cutoff_time = time(23, 59, 59)
             
         # Filter target date orders
         df_target_all = df_clean[df_clean['parsed_date'] == target_date]
@@ -5854,7 +5881,7 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "new_cust_comp_pct": 0.0,
         }
         
-        time_str = datetime.now().strftime("%H:%M") if target_date == today else "23:59"
+        time_str = cutoff_time.strftime("%H:%M")
         date_formatted = target_date.strftime("%d/%m")
         report_text = format_daily_report_text(initial_metrics, target_date, cutoff_time)
         
