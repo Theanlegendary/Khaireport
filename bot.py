@@ -634,6 +634,8 @@ def get_mode(cfg):
 
 
 def is_group_chat(update: Update):
+    if not update:
+        return False
     chat = update.effective_chat
     return bool(chat and chat.type in ("group", "supergroup"))
 
@@ -645,11 +647,15 @@ def is_user_allowed(update: Update, cfg: dict) -> bool:
     allowed = cfg["telegram"].get("allowed_user_ids") or []
     if not allowed:
         return True
+    if not update:
+        return False
     user = update.effective_user
     return bool(user and user.id in allowed)
 
 
 def requester_chat_id(update: Update):
+    if not update:
+        return None
     if is_group_chat(update):
         user = update.effective_user
         return user.id if user else None
@@ -7683,7 +7689,8 @@ async def execute_daily_report(
             output_xlsx_path = os.path.join(tmpdir, output_xlsx_name)
             
             try:
-                msg = await edit_or_send_requester_text(msg, update, context, report_text + f"\n\nGenerating master Excel report using {template_name}...")
+                if update and context:
+                    msg = await edit_or_send_requester_text(msg, update, context, report_text + f"\n\nGenerating master Excel report using {template_name}...")
                 metrics = await asyncio.to_thread(build_master_daily_report_excel, template_path, src, output_xlsx_path, target_date, cutoff_time, new_cust_path)
                 
                 if metrics:
@@ -7700,7 +7707,8 @@ async def execute_daily_report(
                             metrics["under_5_branches"] = initial_metrics.get("under_5_branches", [])
                     report_text = format_daily_report_text(metrics, target_date, cutoff_time)
                 
-                msg = await edit_or_send_requester_text(msg, update, context, report_text + "\n\nRendering report images...")
+                if update and context:
+                    msg = await edit_or_send_requester_text(msg, update, context, report_text + "\n\nRendering report images...")
                 
                 # Render the reports
                 from excel_to_image import render_excel_reports
@@ -7736,7 +7744,7 @@ async def execute_daily_report(
                             photo_data = f.read()
                             media_list.append(InputMediaPhoto(io.BytesIO(photo_data), caption=captions.get(rep_name, "")))
                             
-                if media_list:
+                if media_list and update and context:
                     # Telegram supports up to 10 photos per media group
                     for chunk_idx in range(0, len(media_list), 10):
                         chunk = media_list[chunk_idx:chunk_idx+10]
