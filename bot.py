@@ -5942,12 +5942,17 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "showroom_report",
                     "customer_report"
                 ]
+                date_full = target_date.strftime("%d/%m/%Y")
                 captions = {
-                    "day_report": f"📅 Bill Order - Day ({date_formatted})",
-                    "sp_order_express_all": f"📦 [SERVICE POINT] Report of Order Express ({date_formatted})",
-                    "agent_report": f"🤝 [AGENT] Report of Order Express ({date_formatted})",
-                    "showroom_report": f"🏬 [SHOWROOM] Report of Order Express ({date_formatted})",
-                    "customer_report": f"👥 New Customer Report ({date_formatted})"
+                    "day_report": (
+                        f"@everyone សួស្តីបងៗនេះជារបាយការណបញ្ញើ និងរបាយណ៏លទ្ធផលភ្ញៀវថ្មីសម្រាប់ថ្ងៃទី{date_full} \n"
+                        f"ត្រឹម ម៉ោង{time_str}នេះ សូមព្យាយាមបន្ថែមទៀតបងៗ \n"
+                        f"អរគុណបង"
+                    ),
+                    "sp_order_express_all": f"📦 [SERVICE POINT] Report of Order Express ({date_formatted} - {time_str})",
+                    "agent_report": f"🤝 [AGENT] Report of Order Express ({date_formatted} - {time_str})",
+                    "showroom_report": f"🏬 [SHOWROOM] Report of Order Express ({date_formatted} - {time_str})",
+                    "customer_report": f"👥 New Customer Report ({date_formatted} - {time_str})"
                 }
                 
                 for rep_name in report_order:
