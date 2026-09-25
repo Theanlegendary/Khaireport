@@ -5203,6 +5203,7 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
         metrics = None
         try:
             ws_p = wb.Worksheets("Province_Report")
+            ws_sp = wb.Worksheets("SP_RP")
             ws_sr = wb.Worksheets("Showroom_RP")
             ws_ar = wb.Worksheets("Agent_RP")
             
@@ -5212,26 +5213,33 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                 except Exception:
                     return 0
 
-            total_val = _safe_int(ws_p.Range("AG6").Value)
-            diff_val = _safe_int(ws_p.Range("AI6").Value)
-            sp_val = _safe_int(ws_p.Range("AL6").Value)
-            agent_val = _safe_int(ws_p.Range("AP6").Value)
-            sr_val = _safe_int(ws_p.Range("AT6").Value)
+            # Province_Report Row 8 is Metfone Express total row:
+            # Col E (5): BILL ORDER - DAY Result (bill)
+            # Col G (7): BILL ORDER - DAY Δ n-1
+            # Col J (10): Service Point Result (bill)
+            # Col O (15): Agent Result (bill)
+            # Col T (20): Showroom Result (bill)
+            total_val = _safe_int(ws_p.Range("E8").Value)
+            diff_val = _safe_int(ws_p.Range("G8").Value)
+            sp_val = _safe_int(ws_p.Range("J8").Value)
+            agent_val = _safe_int(ws_p.Range("O8").Value)
+            sr_val = _safe_int(ws_p.Range("T8").Value)
             
             zero_pnp = []      # PNP SPs with 0 inday orders → suffix numbers like "001", "003"
             zero_prov = []     # Non-PNP SPs with 0 inday orders → full code like "KANP001"
             zero_pos = []      # kept for backward compat (all zero-order SPs combined)
             po_regex = re.compile(r'^[A-Z]{3,4}P\d{3}$')
 
-            for r in range(8, 44):
+            # SP post offices are listed in SP_RP sheet Rows 8 to 44
+            for r in range(8, 45):
                 try:
-                    po_code = str(ws_p.Cells(r, 2).Value or '').strip().upper()
+                    po_code = str(ws_sp.Cells(r, 3).Value or '').strip().upper()
                 except Exception:
                     po_code = ''
                 if not po_regex.match(po_code):
                     continue
                 try:
-                    orders = int(float(ws_p.Cells(r, 11).Value or 0))  # Col K: Inday orders
+                    orders = int(float(ws_sp.Cells(r, 11).Value or 0))  # Col K: Inday orders
                 except Exception:
                     orders = 0
                 if orders == 0:
@@ -5253,14 +5261,14 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                     b_orders = 0
                 if b_name and b_orders == 0:
                     zero_branches.append(b_name)
-            # Keep under_5_branches for any other usage
+            # Keep under_5_branches for zero-order branches
             under_5_branches = zero_branches
                     
             lowest_sr = []
-            for r in range(6, 28):
+            for r in range(7, 29):
                 try:
-                    b_name = str(ws_sr.Cells(r, 4).Value or '').strip() # Col D: Branch
-                    sr_orders = int(float(ws_sr.Cells(r, 12).Value or 0)) # Col L: Inday order
+                    b_name = str(ws_sr.Cells(r, 3).Value or '').strip() # Col C: Branch
+                    sr_orders = int(float(ws_sr.Cells(r, 11).Value or 0)) # Col K: Inday order
                 except Exception:
                     b_name = ''
                     sr_orders = 0
@@ -5268,10 +5276,10 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                     lowest_sr.append(f"{b_name} ({sr_orders})")
                     
             lowest_agent = []
-            for r in range(6, 28):
+            for r in range(7, 29):
                 try:
-                    b_name = str(ws_ar.Cells(r, 4).Value or '').strip() # Col D: Branch
-                    ag_orders = int(float(ws_ar.Cells(r, 12).Value or 0)) # Col L: Inday order
+                    b_name = str(ws_ar.Cells(r, 3).Value or '').strip() # Col C: Branch
+                    ag_orders = int(float(ws_ar.Cells(r, 11).Value or 0)) # Col K: Inday order
                 except Exception:
                     b_name = ''
                     ag_orders = 0
@@ -5877,6 +5885,17 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 metrics = await asyncio.to_thread(build_master_daily_report_excel, template_path, src, output_xlsx_path, target_date, cutoff_time, new_cust_path)
                 
                 if metrics:
+                    if metrics.get("total", 0) == 0 and initial_metrics.get("total", 0) > 0:
+                        metrics["total"] = initial_metrics["total"]
+                        metrics["diff_n1"] = initial_metrics["diff_n1"]
+                        metrics["sp"] = initial_metrics["sp"]
+                        metrics["agent"] = initial_metrics["agent"]
+                        metrics["showroom"] = initial_metrics["showroom"]
+                        if not metrics.get("zero_pnp") and not metrics.get("zero_prov"):
+                            metrics["zero_pnp"] = initial_metrics.get("zero_pnp", [])
+                            metrics["zero_prov"] = initial_metrics.get("zero_prov", [])
+                        if not metrics.get("under_5_branches"):
+                            metrics["under_5_branches"] = initial_metrics.get("under_5_branches", [])
                     report_text = format_daily_report_text(metrics, target_date, cutoff_time)
                 
                 msg = await edit_or_send_requester_text(msg, update, context, report_text + "\n\nRendering report images...")
