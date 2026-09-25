@@ -1,6 +1,14 @@
 {
   "telegram": {
-    "bot_token": "8988179337:AAE9qBpa9O4QZ2PVA7Bm8s25Hzkknv6jb0g",
+    "bot_token": "8988179337:AAGJsJ9XbVMpxbQTDSJ-2zeLrl0Nt8LWiCQ",
+    "daily_report_group_id": -5587688944,
+    "daily_report_schedule": {
+      "enabled": true,
+      "time": "18:00",
+      "target_group_ids": [
+        -5587688944
+      ]
+    },
     "keyword": "push",
     "allowed_chat_ids": [],
     "allowed_user_ids": [],

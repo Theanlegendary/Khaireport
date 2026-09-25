@@ -20,10 +20,16 @@ import sys
 import tempfile
 import asyncio
 import io
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 import threading
 import pandas as pd
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import warnings
+from PIL import Image
+from PIL.Image import DecompressionBombWarning
+
+Image.MAX_IMAGE_PIXELS = None
+warnings.simplefilter("ignore", DecompressionBombWarning)
 
 from telegram import Update
 from telegram.ext import (Application, MessageHandler, CommandHandler,
@@ -201,6 +207,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 import downloader
 import generate_report
+import generate_summary
 import excel_to_image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -239,11 +246,15 @@ def track_report_dir(tmpdir: str):
     """Record a tempdir so /clean can delete it later."""
     today_str = datetime.now().strftime("%Y-%m-%d")
     try:
+        data = {}
         if os.path.exists(REPORTS_LOG_PATH):
             with open(REPORTS_LOG_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-        else:
-            data = {}
+                content = f.read().strip()
+                if content:
+                    try:
+                        data = json.loads(content)
+                    except json.JSONDecodeError:
+                        data = {}
         # Prune old days (keep only today)
         data = {k: v for k, v in data.items() if k == today_str}
         if today_str not in data:
@@ -254,6 +265,76 @@ def track_report_dir(tmpdir: str):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         log.warning(f"track_report_dir failed: {e}")
+
+
+def _make_run_cache(name: str) -> str:
+    """Return an isolated run-cache directory inside project cache/<name>/run_<ts>_<rand>.
+    Also cleans up older run directories inside cache/<name>/ that are older than 1 hour.
+    This prevents wiping directories that are actively being forwarded while avoiding
+    infinite disk accumulation.
+    """
+    import shutil, uuid, time
+    base_dir = os.path.join(HERE, "cache", name)
+    try:
+        os.makedirs(base_dir, exist_ok=True)
+        # Clean up runs older than 1 hour
+        cutoff = time.time() - 3600
+        for entry in os.scandir(base_dir):
+            if entry.is_dir() and entry.name.startswith("run_"):
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        shutil.rmtree(entry.path, ignore_errors=True)
+                except Exception:
+                    pass
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        run_dir = os.path.join(base_dir, run_id)
+        os.makedirs(run_dir, exist_ok=True)
+        return run_dir
+    except Exception as e:
+        log.warning(f"_make_run_cache({name}) failed: {e}; falling back to mkdtemp")
+        return tempfile.mkdtemp(prefix=name + "_")
+
+
+def _cleanup_old_temp_bot_dirs():
+    """Delete accumulated %TEMP%/push_*, total_*, penalty_* etc. dirs on startup.
+    Keeps dirs younger than 1 hour so any currently-running session isn't affected.
+    """
+    import shutil, glob
+    prefixes = (
+        "push_", "pending_", "total_", "penalty_", "speed_", "tomorrow_",
+        "find_", "check_", "export_po_", "report_", "daily_report_",
+        "delayed_", "vs_", "mega_", "dvc_",
+    )
+    tmp = tempfile.gettempdir()
+    cutoff = datetime.now().timestamp() - 3600  # older than 1 hour
+    removed = 0
+    freed_bytes = 0
+    for entry in os.scandir(tmp):
+        if not entry.is_dir():
+            continue
+        if not any(entry.name.startswith(p) for p in prefixes):
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if mtime < cutoff:
+            try:
+                size = sum(
+                    f.stat().st_size
+                    for f in os.scandir(entry.path)
+                    if f.is_file()
+                )
+                shutil.rmtree(entry.path, ignore_errors=True)
+                removed += 1
+                freed_bytes += size
+            except Exception as e:
+                log.debug(f"Cleanup {entry.path}: {e}")
+    if removed:
+        log.info(
+            f"Startup cleanup: removed {removed} old bot temp dirs, "
+            f"freed ~{freed_bytes // (1024*1024)} MB from {tmp}"
+        )
 
 
 from functools import wraps
@@ -315,6 +396,29 @@ def load_config():
 def save_config(cfg):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def update_bearer_token(new_token: str):
+    cfg = load_config()
+    if "api" not in cfg:
+        cfg["api"] = {}
+    cfg["api"]["bearer_token"] = new_token.strip()
+    save_config(cfg)
+    
+    here = os.path.dirname(os.path.abspath(__file__))
+    for sub in ["push_bot", "tomorrow_bot"]:
+        sub_cfg_path = os.path.join(here, sub, "config.json")
+        if os.path.exists(sub_cfg_path):
+            try:
+                with open(sub_cfg_path, encoding="utf-8") as f:
+                    scfg = json.load(f)
+                if "api" not in scfg:
+                    scfg["api"] = {}
+                scfg["api"]["bearer_token"] = new_token.strip()
+                with open(sub_cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(scfg, f, ensure_ascii=False, indent=2)
+            except Exception as e_sub:
+                log.warning("Could not sync token to %s: %s", sub_cfg_path, e_sub)
 
 
 def load_registered_groups():
@@ -423,6 +527,7 @@ def _update_migrated_chat_id(old_chat_id, new_chat_id):
 
 async def safe_api_call(func, *args, **kwargs):
     max_retries = 5
+    is_doc = "send_document" in getattr(func, "__name__", "") or "document" in kwargs
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
@@ -431,9 +536,16 @@ async def safe_api_call(func, *args, **kwargs):
             log.warning(f"Flood control exceeded. Waiting for {wait_time} seconds before retrying (attempt {attempt + 1})...")
             await asyncio.sleep(wait_time + 1)
         except NetworkError as e:
-            if is_doc and "timed out" in str(e).lower():
+            err_str = str(e).lower()
+            if is_doc and "timed out" in err_str:
                 log.warning(f"Document upload timed out on client ({e}). Not retrying to prevent sending duplicate files.")
                 return None
+            if "chat not found" in err_str:
+                log.warning(f"Chat not found: {e}. Skipping immediately (no retry).")
+                raise e
+            if "photo_invalid_dimensions" in err_str:
+                log.warning(f"Photo invalid dimensions: {e}. Skipping retries immediately.")
+                raise e
             log.warning(f"Network error: {e}. Retrying in 3 seconds (attempt {attempt + 1})...")
             await asyncio.sleep(3)
             _reset_io_buffers(args, kwargs)
@@ -441,6 +553,9 @@ async def safe_api_call(func, *args, **kwargs):
             raise e
         except Exception as e:
             error_msg = str(e)
+            if "chat not found" in error_msg.lower():
+                log.warning(f"Chat not found: {e}. Skipping immediately (no retry).")
+                raise e
             new_chat_id = _extract_migrated_chat_id(error_msg)
             if new_chat_id is not None:
                 old_chat_id = kwargs.get("chat_id")
@@ -584,7 +699,11 @@ async def send_requester_text(
             context.bot.send_message, chat_id=chat_id, text=text, parse_mode=parse_mode
         )
     except Exception as e:
-        log.warning("Could not send requester text privately to %s: %s", chat_id, e)
+        err_msg = str(e)
+        if "bot can't initiate conversation" in err_msg or "Forbidden" in err_msg:
+            log.info("Requester %s has not started bot in private DM; falling back to group reply.", chat_id)
+        else:
+            log.warning("Could not send requester text privately to %s: %s", chat_id, e)
         # If in a group chat, fallback to sending directly in the group
         if is_group_chat(update) and update.effective_chat:
             try:
@@ -617,23 +736,66 @@ async def edit_or_send_requester_text(
     return await send_requester_text(update, context, text, parse_mode=parse_mode)
 
 
-async def send_requester_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, photo):
+_PRIMARY_TOKEN = None
+_thread_local = threading.local()
+
+def get_group_sender_bot(context: ContextTypes.DEFAULT_TYPE = None):
+    """
+    Returns a Bot instance configured with the primary bot token (@GrabberBill_Bot)
+    for dispatching messages/media to Telegram groups.
+    Ensures worker bots (@MFETMR_bot) can generate data and dispatch group reports
+    via @GrabberBill_Bot safely without cross-loop or permission errors.
+    """
+    global _PRIMARY_TOKEN
+    if not _PRIMARY_TOKEN:
+        try:
+            cfg = load_config()
+            _PRIMARY_TOKEN = cfg.get("telegram", {}).get("bot_token")
+        except Exception:
+            pass
+
+    if context and context.bot and _PRIMARY_TOKEN and context.bot.token == _PRIMARY_TOKEN:
+        return context.bot
+
+    if not hasattr(_thread_local, "primary_bot") or _thread_local.primary_bot is None:
+        if _PRIMARY_TOKEN:
+            from telegram import Bot
+            _thread_local.primary_bot = Bot(token=_PRIMARY_TOKEN)
+        elif context and context.bot:
+            return context.bot
+    return _thread_local.primary_bot
+
+
+async def send_requester_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, photo, caption=None, parse_mode=None, **kwargs):
     chat_id = requester_chat_id(update)
     if chat_id is None:
         log.warning("Cannot send requester photo without a chat id.")
         return False
 
     try:
-        await safe_api_call(context.bot.send_photo, chat_id=chat_id, photo=photo)
+        await safe_api_call(context.bot.send_photo, chat_id=chat_id, photo=photo, caption=caption, parse_mode=parse_mode, **kwargs)
         return True
     except Exception as e:
         log.warning("Could not send requester photo to %s: %s", chat_id, e)
+        try:
+            if hasattr(photo, "seek"):
+                photo.seek(0)
+            doc_name = getattr(photo, "name", "report.png") or "report.png"
+            await safe_api_call(context.bot.send_document, chat_id=chat_id, document=photo, filename=doc_name, caption=caption, parse_mode=parse_mode, **kwargs)
+            return True
+        except Exception as e_doc:
+            log.warning("Fallback document to requester %s failed: %s", chat_id, e_doc)
         if is_group_chat(update) and update.effective_chat:
             try:
+                if hasattr(photo, "seek"):
+                    photo.seek(0)
                 await safe_api_call(
                     context.bot.send_photo,
                     chat_id=update.effective_chat.id, 
                     photo=photo,
+                    caption=caption,
+                    parse_mode=parse_mode,
+                    **kwargs
                 )
                 return True
             except Exception as e2:
@@ -712,88 +874,206 @@ async def forward_result_to_groups(context: ContextTypes.DEFAULT_TYPE, payload):
     result = payload["result"]
     forward_groups = payload["forward_groups"]
     forward_mapping = payload["forward_mapping"]
-    sent_groups = 0
+    import io
 
-    for group_id_str in forward_groups:
-        try:
-            group_id = int(group_id_str)
-        except ValueError:
-            group_id = group_id_str  # fallback if it's a string like "@channel"
-
-        allowed_handles = forward_mapping.get(group_id_str, ["*"])
-        wants_all = "*" in allowed_handles
-        sent_any = False
-
-        for hr in result["handle_results"]:
-            handle = hr["handle"]
-            if not wants_all and handle not in allowed_handles:
-                continue
-
-            for hf in hr["handle_files"]:
+    # ── Pre-render all images ONCE (shared across all groups) ────────────────
+    image_cache = {}
+    for hr in result["handle_results"]:
+        for hf in hr.get("handle_files", []):
+            fpath = hf["path"]
+            if fpath not in image_cache and os.path.exists(fpath):
                 try:
-                    img_buf = excel_to_image.excel_to_image(hf["path"])
-                    img_buf.name = f"{handle}.png"
-                    await safe_api_call(context.bot.send_photo, chat_id=group_id, photo=img_buf)
-                    sent_any = True
-                    await asyncio.sleep(0.5)
+                    buf = excel_to_image.excel_to_image(fpath)
+                    image_cache[fpath] = buf.getvalue()
                 except Exception as e:
-                    log.error(f"Image to group {group_id}: {e}")
+                    log.warning(f"Pre-render failed {fpath}: {e}")
+                    image_cache[fpath] = None  # mark failed so we skip per-group
 
-            # Auto-send Excel file if handle has 50+ pending rows
-            pending_count = hr.get("handle_counts", {}).get("Pending", 0)
-            threshold_count = pending_count if not wants_all else sum(hr.get("handle_counts", {}).values())
-            if threshold_count > 50:
-                for hf in hr["handle_files"]:
-                    if not wants_all and "_Pending_" not in os.path.basename(hf["path"]):
-                        continue
-                    try:
-                        with open(hf["path"], "rb") as ef:
-                            await safe_api_call(
-                                context.bot.send_document,
-                                chat_id=group_id,
-                                document=ef,
-                                filename=os.path.basename(hf["path"]),
-                            )
-                            sent_any = True
-                            await asyncio.sleep(0.5)
-                    except Exception as e:
-                        log.error(f"Excel file to group {group_id} for {handle}: {e}")
-
+    # ── Pre-cache all Excel files in memory (shared across all groups) ─────────
+    excel_cache = {}
+    for hr in result["handle_results"]:
+        combined_path = hr.get("handle_excel_path")
+        if combined_path and combined_path not in excel_cache and os.path.exists(combined_path):
             try:
-                await safe_api_call(context.bot.send_message, chat_id=group_id, text=hr["remark"])
-                sent_any = True
-                await asyncio.sleep(0.5)
+                with open(combined_path, "rb") as ef:
+                    excel_cache[combined_path] = ef.read()
             except Exception as e:
-                log.error(f"Remark to group {group_id}: {e}")
+                log.warning(f"Pre-cache Excel failed {combined_path}: {e}")
+        for hf in hr.get("handle_files", []):
+            fpath = hf.get("path")
+            if fpath and fpath not in excel_cache and os.path.exists(fpath):
+                try:
+                    with open(fpath, "rb") as ef:
+                        excel_cache[fpath] = ef.read()
+                except Exception as e:
+                    log.warning(f"Pre-cache Excel failed {fpath}: {e}")
 
-        if wants_all:
+    final_xlsx = result.get("final_xlsx")
+    if final_xlsx and final_xlsx not in excel_cache and os.path.exists(final_xlsx):
+        try:
+            with open(final_xlsx, "rb") as ef:
+                excel_cache[final_xlsx] = ef.read()
+        except Exception as e:
+            log.warning(f"Pre-cache final Excel failed {final_xlsx}: {e}")
+
+    # ── Send to one group (sequential within each group) ─────────────────────
+    sender_bot = get_group_sender_bot(context)
+
+    async def _send_to_group(group_id_str: str, sem: asyncio.Semaphore) -> bool:
+        """Returns True if at least one message was sent to this group."""
+        async with sem:
             try:
-                with open(result["final_xlsx"], "rb") as f:
+                group_id = int(group_id_str)
+            except ValueError:
+                group_id = group_id_str
+
+            allowed_handles = forward_mapping.get(group_id_str, [])
+            wants_all = "*" in allowed_handles
+            sent_any = False
+
+            for hr in result["handle_results"]:
+                handle = hr["handle"]
+                if not wants_all and handle not in allowed_handles:
+                    continue
+
+                # Send images
+                for hf in hr["handle_files"]:
+                    fpath = hf["path"]
+                    img_bytes = image_cache.get(fpath)
+                    if img_bytes is None:
+                        continue  # render failed — skip
+                    img_buf = io.BytesIO(img_bytes)
+                    img_buf.name = f"{handle}.png"
+                    try:
+                        try:
+                            await safe_api_call(sender_bot.send_photo, chat_id=group_id, photo=img_buf)
+                        except Exception as pe:
+                            log.warning(f"send_photo→{group_id} {handle} ({pe}), trying document")
+                            img_buf.seek(0)
+                            await safe_api_call(sender_bot.send_document, chat_id=group_id, document=img_buf, filename=f"{handle}.png")
+                        sent_any = True
+                        await asyncio.sleep(0.2)
+                    except Forbidden as e:
+                        log.warning(f"Group {group_id} forbidden ({e}), skipping group.")
+                        return sent_any
+                    except Exception as e:
+                        log.error(f"Image to group {group_id}: {e}")
+
+                # Send combined Excel
+                excel_sent = False
+                combined_path = hr.get("handle_excel_path")
+                combined_bytes = excel_cache.get(combined_path)
+                if combined_bytes is None and combined_path and os.path.exists(combined_path):
+                    try:
+                        with open(combined_path, "rb") as ef:
+                            combined_bytes = ef.read()
+                            excel_cache[combined_path] = combined_bytes
+                    except Exception:
+                        pass
+                if combined_bytes:
+                    try:
+                        ef_buf = io.BytesIO(combined_bytes)
+                        ef_buf.name = os.path.basename(combined_path)
+                        await safe_api_call(
+                            sender_bot.send_document,
+                            chat_id=group_id,
+                            document=ef_buf,
+                            filename=os.path.basename(combined_path),
+                        )
+                        sent_any = True
+                        excel_sent = True
+                        await asyncio.sleep(0.2)
+                    except Forbidden as e:
+                        log.warning(f"Group {group_id} forbidden ({e}), skipping group.")
+                        return sent_any
+                    except Exception as e:
+                        log.error(f"Combined Excel to group {group_id} for {handle}: {e}")
+
+                if not excel_sent:
+                    for hf in hr.get("handle_files", []):
+                        fpath = hf.get("path")
+                        hf_bytes = excel_cache.get(fpath)
+                        if hf_bytes is None and fpath and os.path.exists(fpath):
+                            try:
+                                with open(fpath, "rb") as ef:
+                                    hf_bytes = ef.read()
+                                    excel_cache[fpath] = hf_bytes
+                            except Exception:
+                                pass
+                        if hf_bytes:
+                            try:
+                                ef_buf = io.BytesIO(hf_bytes)
+                                ef_buf.name = os.path.basename(fpath)
+                                await safe_api_call(
+                                    sender_bot.send_document,
+                                    chat_id=group_id,
+                                    document=ef_buf,
+                                    filename=os.path.basename(fpath),
+                                )
+                                sent_any = True
+                                await asyncio.sleep(0.2)
+                            except Forbidden as e:
+                                log.warning(f"Group {group_id} forbidden ({e}), skipping group.")
+                                return sent_any
+                            except Exception as e:
+                                log.error(f"Excel to group {group_id} for {handle}: {e}")
+
+                # Send remark text
+                try:
+                    await safe_api_call(sender_bot.send_message, chat_id=group_id, text=hr["remark"])
+                    sent_any = True
+                    await asyncio.sleep(0.2)
+                except Forbidden as e:
+                    log.warning(f"Group {group_id} forbidden ({e}), skipping group.")
+                    return sent_any
+                except Exception as e:
+                    log.error(f"Remark to group {group_id}: {e}")
+
+            # Send final combined Excel + summary caption (for groups that want *)
+            if wants_all:
+                final_xlsx = result.get("final_xlsx")
+                final_bytes = excel_cache.get(final_xlsx)
+                if final_bytes is None and final_xlsx and os.path.exists(final_xlsx):
+                    try:
+                        with open(final_xlsx, "rb") as f:
+                            final_bytes = ef.read()
+                            excel_cache[final_xlsx] = final_bytes
+                    except Exception:
+                        pass
+                if final_bytes:
+                    try:
+                        ef_buf = io.BytesIO(final_bytes)
+                        ef_buf.name = os.path.basename(final_xlsx)
+                        await safe_api_call(
+                            sender_bot.send_document,
+                            chat_id=group_id,
+                            document=ef_buf,
+                            filename=os.path.basename(final_xlsx),
+                        )
+                        sent_any = True
+                        await asyncio.sleep(0.2)
+                    except Exception as e:
+                        log.error(f"Final Excel to group {group_id}: {e}")
+                try:
                     await safe_api_call(
-                        context.bot.send_document,
+                        sender_bot.send_message,
                         chat_id=group_id,
-                        document=f,
-                        filename=os.path.basename(result["final_xlsx"]),
+                        text=result["summary_caption"],
                     )
                     sent_any = True
-                    await asyncio.sleep(0.5)
-            except Exception as e:
-                log.error(f"Excel to group {group_id}: {e}")
-            try:
-                await safe_api_call(
-                    context.bot.send_message,
-                    chat_id=group_id,
-                    text=result["summary_caption"],
-                )
-                sent_any = True
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                log.error(f"Summary to group {group_id}: {e}")
+                    await asyncio.sleep(0.2)
+                except Exception as e:
+                    log.error(f"Summary to group {group_id}: {e}")
 
-        if sent_any:
-            sent_groups += 1
-            await asyncio.sleep(1.0)
+            if sent_any:
+                await asyncio.sleep(1.0)
+            return sent_any
 
+    # ── Fan out to all groups concurrently (max 3 parallel) ──────────────────
+    sem = asyncio.Semaphore(3)
+    tasks = [_send_to_group(gid, sem) for gid in forward_groups]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    sent_groups = sum(1 for r in results if r is True)
     return sent_groups
 
 
@@ -830,6 +1110,506 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"▶️ Bot RESUMED.\n"
         f"Forwarding to {len(groups)} group(s) is enabled again."
     )
+
+
+async def run_pending_auto_scheduler(app: Application):
+    """Background task loop that sends /total pending report at scheduled hours to registered target groups."""
+    log.info("Starting background auto-scheduler...")
+    SCHEDULED_TARGETS = [
+        {
+            "chat_id": -1003964504795,
+            "title": "🔴 GẤP- ĐIỀU HÀNH TỒN PHÁT",
+            "hours": ["08:00", "14:00", "16:00"]
+        },
+        {
+            "chat_id": -5481716194,
+            "title": "🔴 QUALITY - METFONE EXPRESS",
+            "hours": ["08:00", "14:00", "16:00"]
+        }
+    ]
+    ALL_SCHEDULED_HOURS = sorted(list(set().union(*(t["hours"] for t in SCHEDULED_TARGETS))))
+    state_file = os.path.join(HERE, "pending_schedule_state.json")
+
+    def _load_state():
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_state(st):
+        try:
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(st, f, indent=2)
+        except Exception:
+            pass
+
+    # Wait 2 seconds on startup before first check
+    await asyncio.sleep(2)
+
+    while True:
+        try:
+            cfg = load_config()
+            if is_paused(cfg):
+                await asyncio.sleep(15)
+                continue
+
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+
+            # Determine all slots whose scheduled time has arrived today
+            past_slots = []
+            for slot in ALL_SCHEDULED_HOURS:
+                sh, sm = map(int, slot.split(":"))
+                slot_time_today = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+                if now >= slot_time_today:
+                    past_slots.append(slot)
+
+            if not past_slots:
+                # No scheduled slot reached yet today (e.g. before 08:00)
+                await asyncio.sleep(15)
+                continue
+
+            # The latest scheduled slot that has been reached today (e.g. 08:00 if between 08:00 and 14:00)
+            slot_time = past_slots[-1]
+            current_slot = f"{date_str}_{slot_time.replace(':', '')}"
+
+            state = _load_state()
+            completed_slots = set(state.get("completed_slots", []))
+            if state.get("last_run_slot") == current_slot or current_slot in completed_slots:
+                await asyncio.sleep(15)
+                continue
+
+            # Cooldown if this slot failed very recently (avoid tight error loop)
+            if state.get("failed_slot") == current_slot:
+                last_fail = state.get("last_fail_ts", 0)
+                if (now.timestamp() - last_fail) < 120:
+                    await asyncio.sleep(15)
+                    continue
+
+            active_targets = [t for t in SCHEDULED_TARGETS if slot_time in t["hours"]]
+            if not active_targets:
+                await asyncio.sleep(15)
+                continue
+
+            target_names = ", ".join(f"{str(t['title']).encode('ascii', 'replace').decode('ascii')} ({t['chat_id']})" for t in active_targets)
+            log.info("Triggering scheduled reports (/total & /total pending) for [%s], slot %s (current time: %s)...",
+                     target_names, current_slot, now.strftime('%H:%M:%S'))
+            tmpdir = _make_run_cache("auto_pending_run")
+            stamp = now.strftime("%d.%m_%HH%M")
+            src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+
+            try:
+                await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=True)
+
+                # ── 1. Generate /total pending (Pending summary image & Excel) ──
+                import total_pending_report
+                summary_df, grand_total, df_detail = await asyncio.to_thread(total_pending_report.process_pending_data, src)
+                out_xlsx = os.path.join(tmpdir, f"TOTAL_PENDING_{stamp}.xlsx")
+                await asyncio.to_thread(total_pending_report.export_total_pending_excel, summary_df, grand_total, df_detail, out_xlsx)
+                text_caption = total_pending_report.format_pending_text_summary(summary_df, grand_total, target_date=now)
+
+                img_buf = await asyncio.to_thread(total_pending_report.render_total_pending_image, summary_df, grand_total, xlsx_path=out_xlsx)
+                img_buf.name = f"TOTAL_PENDING_{stamp}.png"
+
+                # ── 2. Generate /total (Daily Push summary images & Total Excel) ──
+                import generate_summary
+                cache_dir = os.path.join(HERE, "cache")
+                rev_cache = os.path.join(cache_dir, "latest_revenue.xlsx")
+                mode = get_mode(cfg)
+                total_res = await asyncio.to_thread(
+                    generate_report.generate_reports_from_data,
+                    src, REF_PATH, tmpdir, return_metadata=True, mode=mode,
+                    revenue_path=rev_cache if os.path.exists(rev_cache) else None
+                )
+                update_webapp_cache(total_res)
+                save_highlight_history(total_res)
+
+                tot_day_date_counts = {}
+                tot_urgent_counts = {}
+                urgent_by_type = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
+                today_ts = pd.Timestamp.now().normalize()
+                tot_fee_counts = {}
+                tot_cod_counts = {}
+                canonical_rn_map = {
+                    "Pickup": "Pickup",
+                    "Delivery": "Delivery",
+                    "Not Assign": "Branch",
+                    "Branch": "Branch",
+                    "Send Mega": "Transit",
+                    "Transit": "Transit",
+                }
+                processed_dfs = set()
+                for rn, df_z in (total_res.get("type_data") or {}).items():
+                    if df_z is None or df_z.empty or id(df_z) in processed_dfs:
+                        continue
+                    processed_dfs.add(id(df_z))
+                    canon_key = canonical_rn_map.get(rn, rn)
+                    handle_col = "POST OFFICE HANDLE"
+                    if handle_col not in df_z.columns:
+                        continue
+                    df_z = df_z.copy()
+                    df_z["_h_upper"] = df_z[handle_col].fillna("").astype(str).str.strip().str.upper()
+                    df_z = df_z[df_z["_h_upper"] != ""]
+                    df_z = df_z[~df_z["_h_upper"].apply(lambda h: len(h) >= 4 and h[3] in ('A', 'S'))]
+                    if df_z.empty:
+                        continue
+                    date_col_z = total_res.get("date_col") or (
+                        "CREATED DATE" if "CREATED DATE" in df_z.columns else
+                        "CURRENT TIME" if "CURRENT TIME" in df_z.columns else None
+                    )
+                    if date_col_z and date_col_z in df_z.columns:
+                        parsed_z = pd.to_datetime(df_z[date_col_z], dayfirst=True, format="mixed", errors="coerce")
+                        df_z["_zdate"] = parsed_z.dt.date
+                        days_diff = (today_ts - parsed_z.dt.normalize()).dt.days
+                        df_recent = df_z[parsed_z.notna() & (days_diff <= 14)]
+                        if not df_recent.empty:
+                            date_grp = df_recent.groupby(["_h_upper", "_zdate"]).size()
+                            for (h, d_val), cnt in date_grp.items():
+                                if h not in tot_day_date_counts:
+                                    tot_day_date_counts[h] = {}
+                                tot_day_date_counts[h][d_val] = tot_day_date_counts[h].get(d_val, 0) + int(cnt)
+                    if "CREATED DATE" in df_z.columns:
+                        cd_parsed = pd.to_datetime(df_z["CREATED DATE"], dayfirst=True, format="mixed", errors="coerce")
+                        days_old = (today_ts - cd_parsed.dt.normalize()).dt.days
+                        df_ge1 = df_z[days_old >= 1]
+                        if not df_ge1.empty:
+                            urgent_by_type[canon_key] = urgent_by_type.get(canon_key, 0) + len(df_ge1)
+                            ge1_grp = df_ge1.groupby("_h_upper").size()
+                            for h, cnt in ge1_grp.items():
+                                if h not in tot_urgent_counts:
+                                    tot_urgent_counts[h] = {"1day": 0, "3days": 0}
+                                tot_urgent_counts[h]["1day"] += int(cnt)
+                        df_ge3 = df_z[days_old >= 3]
+                        if not df_ge3.empty:
+                            ge3_grp = df_ge3.groupby("_h_upper").size()
+                            for h, cnt in ge3_grp.items():
+                                if h not in tot_urgent_counts:
+                                    tot_urgent_counts[h] = {"1day": 0, "3days": 0}
+                                tot_urgent_counts[h]["3days"] += int(cnt)
+                    fee_col = next((c for c in df_z.columns if 'FEE' in c.upper()), None)
+                    if fee_col:
+                        fee_nums = pd.to_numeric(df_z[fee_col], errors="coerce").fillna(0)
+                        df_fee = df_z[fee_nums > 0].copy()
+                        if not df_fee.empty:
+                            df_fee["_fee_val"] = fee_nums[fee_nums > 0]
+                            fee_grp = df_fee.groupby("_h_upper")["_fee_val"].sum()
+                            for h, f_v in fee_grp.items():
+                                tot_fee_counts[h] = tot_fee_counts.get(h, 0.0) + float(f_v)
+                    cod_col = next((c for c in df_z.columns if 'COD' in c.upper()), None)
+                    if cod_col:
+                        cod_nums = pd.to_numeric(df_z[cod_col], errors="coerce").fillna(0)
+                        df_cod = df_z[cod_nums > 0].copy()
+                        if not df_cod.empty:
+                            df_cod["_cod_val"] = cod_nums[cod_nums > 0]
+                            cod_grp = df_cod.groupby("_h_upper")["_cod_val"].sum()
+                            for h, c_v in cod_grp.items():
+                                tot_cod_counts[h] = tot_cod_counts.get(h, 0.0) + float(c_v)
+
+                tot_overall = total_res["overall_counts"]
+                for k in urgent_by_type:
+                    urgent_by_type[k] = min(urgent_by_type[k], tot_overall.get(k, 0))
+                grand_total_num = sum(tot_overall.values())
+                tot_urgent_sum = sum(urgent_by_type.values())
+
+                total_summary_caption = "\n".join([
+                    f"📋 Daily Report  {now.strftime('%d/%m/%Y %H:%M')}",
+                    f"Pickup: {tot_overall.get('Pickup', 0)} (Urgent: {urgent_by_type.get('Pickup', 0)})  |  "
+                    f"Delivery: {tot_overall.get('Delivery', 0)} (Urgent: {urgent_by_type.get('Delivery', 0)})  |  "
+                    f"Transit: {tot_overall.get('Transit', 0) or tot_overall.get('Send Mega', 0)} (Urgent: {urgent_by_type.get('Transit', 0)})  |  "
+                    f"Branch: {tot_overall.get('Branch', 0) or tot_overall.get('Not Assign', 0)} (Urgent: {urgent_by_type.get('Branch', 0)})",
+                    f"Grand Total: {grand_total_num}  |  Total Urgent: {tot_urgent_sum}",
+                ])
+
+                pnp_handles = [hr for hr in total_res["handle_results"] if hr["handle"].upper().startswith("PNP") or hr["handle"].upper().startswith("KAN")]
+                prov_handles = [hr for hr in total_res["handle_results"] if not (hr["handle"].upper().startswith("PNP") or hr["handle"].upper().startswith("KAN"))]
+
+                pnp_overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
+                for hr in pnp_handles:
+                    hc = hr.get("handle_counts", {})
+                    pnp_overall["Pickup"] += hc.get("Pickup", 0)
+                    pnp_overall["Delivery"] += hc.get("Delivery", 0)
+                    pnp_overall["Transit"] += hc.get("Transit", 0) or hc.get("Send Mega", 0)
+                    pnp_overall["Branch"] += hc.get("Branch", 0) or hc.get("Not Assign", 0)
+                pnp_caption = f"📋 PHNOM PENH AREA  {now.strftime('%d/%m/%Y %H:%M')}\nPickup: {pnp_overall['Pickup']}  |  Delivery: {pnp_overall['Delivery']}  |  Transit: {pnp_overall['Transit']}  |  Branch: {pnp_overall['Branch']}\nTotal: {sum(pnp_overall.values())}"
+                img_pnp = generate_summary.build_summary_image(
+                    pnp_handles,
+                    pnp_overall,
+                    zone_label="PHNOM PENH AREA",
+                    day_date_counts=tot_day_date_counts if tot_day_date_counts else None,
+                    urgent_counts=tot_urgent_counts if tot_urgent_counts else None,
+                    fee_counts=tot_fee_counts if tot_fee_counts else None,
+                    cod_counts=tot_cod_counts if tot_cod_counts else None,
+                    vip_counts=total_res.get("vip_counts"),
+                )
+                img_pnp.name = f"summary_pnp_{stamp}.png"
+
+                prov_overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
+                for hr in prov_handles:
+                    hc = hr.get("handle_counts", {})
+                    prov_overall["Pickup"] += hc.get("Pickup", 0)
+                    prov_overall["Delivery"] += hc.get("Delivery", 0)
+                    prov_overall["Transit"] += hc.get("Transit", 0) or hc.get("Send Mega", 0)
+                    prov_overall["Branch"] += hc.get("Branch", 0) or hc.get("Not Assign", 0)
+                prov_caption = f"📋 PROVINCIAL BRANCHES  {now.strftime('%d/%m/%Y %H:%M')}\nPickup: {prov_overall['Pickup']}  |  Delivery: {prov_overall['Delivery']}  |  Transit: {prov_overall['Transit']}  |  Branch: {prov_overall['Branch']}\nTotal: {sum(prov_overall.values())}"
+                img_prov = generate_summary.build_summary_image(
+                    prov_handles,
+                    prov_overall,
+                    zone_label="PROVINCIAL BRANCHES",
+                    day_date_counts=tot_day_date_counts if tot_day_date_counts else None,
+                    urgent_counts=tot_urgent_counts if tot_urgent_counts else None,
+                    fee_counts=tot_fee_counts if tot_fee_counts else None,
+                    cod_counts=tot_cod_counts if tot_cod_counts else None,
+                    vip_counts=total_res.get("vip_counts"),
+                )
+                img_prov.name = f"summary_prov_{stamp}.png"
+
+                total_xlsx = os.path.join(tmpdir, f"Total_{stamp}.xlsx")
+                generate_summary.build_total_excel(total_res, total_xlsx)
+
+                # ── 3. Deliver reports to active target groups ──
+                sender_bot = get_group_sender_bot() or app.bot
+                for target in active_targets:
+                    t_chat_id = target["chat_id"]
+                    t_title = target["title"]
+                    safe_title = str(t_title).encode('ascii', 'replace').decode('ascii')
+
+                    # A) Send /total (Daily Summary Images + Excel)
+                    try:
+                        if hasattr(img_pnp, "seek"):
+                            img_pnp.seek(0)
+                        await sender_bot.send_photo(chat_id=t_chat_id, photo=img_pnp, caption=pnp_caption)
+                    except Exception as e_pnp:
+                        log.warning("Could not send scheduled PNP summary photo to %s: %s", safe_title, e_pnp)
+
+                    try:
+                        if hasattr(img_prov, "seek"):
+                            img_prov.seek(0)
+                        await sender_bot.send_photo(chat_id=t_chat_id, photo=img_prov, caption=prov_caption)
+                    except Exception as e_prov:
+                        log.warning("Could not send scheduled Prov summary photo to %s: %s", safe_title, e_prov)
+
+                    try:
+                        with open(total_xlsx, "rb") as f_tot:
+                            await sender_bot.send_document(
+                                chat_id=t_chat_id,
+                                document=f_tot,
+                                filename=os.path.basename(total_xlsx),
+                                caption=total_summary_caption
+                            )
+                    except Exception as e_tot_doc:
+                        log.warning("Could not send scheduled Total Excel to %s: %s", safe_title, e_tot_doc)
+
+                    # B) Send /total pending (Pending Summary Image + Excel)
+                    try:
+                        if hasattr(img_buf, "seek"):
+                            img_buf.seek(0)
+                        try:
+                            await sender_bot.send_photo(
+                                chat_id=t_chat_id,
+                                photo=img_buf,
+                                caption=text_caption
+                            )
+                        except Exception as e_photo:
+                            log.warning("Could not send scheduled photo to %s (%s): %s. Trying document fallback...", t_chat_id, safe_title, e_photo)
+                            if hasattr(img_buf, "seek"):
+                                img_buf.seek(0)
+                            await sender_bot.send_document(
+                                chat_id=t_chat_id,
+                                document=img_buf,
+                                filename=img_buf.name,
+                                caption=text_caption
+                            )
+
+                        with open(out_xlsx, "rb") as f:
+                            await sender_bot.send_document(
+                                chat_id=t_chat_id,
+                                document=f,
+                                filename=os.path.basename(out_xlsx),
+                                caption=f"TOTAL PENDING REPORT {now.strftime('%d/%m/%Y %H:%M')}"
+                            )
+                        log.info("Successfully delivered scheduled reports (/total & /total pending) to %s (%s)", t_chat_id, safe_title)
+                    except Exception as e_send:
+                        log.exception("Error sending scheduled report to %s (%s): %s", t_chat_id, safe_title, e_send)
+
+                state["last_run_slot"] = current_slot
+                state["last_run_time"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                state["total_items"] = grand_total.get("Total", 0) if isinstance(grand_total, dict) else 0
+                state.pop("failed_slot", None)
+                state.pop("last_fail_ts", None)
+                state.pop("last_error", None)
+                completed_slots.add(current_slot)
+                state["completed_slots"] = sorted(list(completed_slots))[-30:]
+                _save_state(state)
+            except Exception as e_run:
+                log.exception("Error executing auto-scheduled reports: %s", e_run)
+                state["failed_slot"] = current_slot
+                state["last_fail_ts"] = now.timestamp()
+                state["last_error"] = str(e_run)
+                _save_state(state)
+
+        except Exception as e_loop:
+            log.exception("Error in run_pending_auto_scheduler loop: %s", e_loop)
+
+        await asyncio.sleep(15)
+
+
+async def run_daily_report_auto_scheduler(app: Application):
+    """Background auto-scheduler for /dailyreport at scheduled time (e.g. 18:00 / 6:00 PM)."""
+    log.info("Starting background daily report auto-scheduler (scheduled for 18:00)...")
+    state_file = os.path.join(HERE, "daily_report_schedule_state.json")
+
+    def _load_state():
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_state(st):
+        try:
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(st, f, indent=2)
+        except Exception:
+            pass
+
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            cfg = load_config()
+            if is_paused(cfg):
+                await asyncio.sleep(15)
+                continue
+
+            sched_cfg = cfg.get("daily_report_schedule", {})
+            if not sched_cfg.get("enabled", True):
+                await asyncio.sleep(20)
+                continue
+
+            target_time_str = sched_cfg.get("time", "18:00")
+            target_sh, target_sm = map(int, target_time_str.split(":"))
+
+            now = datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+            today_target_dt = now.replace(hour=target_sh, minute=target_sm, second=0, microsecond=0)
+
+            if now >= today_target_dt:
+                state = _load_state()
+                completed_days = set(state.get("completed_days", []))
+
+                if today_str not in completed_days:
+                    log.info("Daily report schedule triggered for %s at %s!", today_str, target_time_str)
+                    target_groups = sched_cfg.get("target_group_ids")
+                    if not target_groups:
+                        target_groups = cfg.get("telegram", {}).get("daily_report_group_id", -5587688944)
+                    if not isinstance(target_groups, list):
+                        target_groups = [target_groups]
+
+                    from datetime import time as dt_time
+                    cutoff_t = dt_time(target_sh, target_sm)
+                    try:
+                        await execute_daily_report(
+                            target_date=now.date(),
+                            cutoff_time=cutoff_t,
+                            target_groups=target_groups,
+                        )
+                        completed_days.add(today_str)
+                        state["completed_days"] = sorted(list(completed_days))[-30:]
+                        _save_state(state)
+                        log.info("Daily report successfully auto-posted for %s at %s!", today_str, target_time_str)
+                    except Exception as err:
+                        log.exception("Error executing daily report auto-schedule: %s", err)
+        except Exception as e_loop:
+            log.exception("Error in run_daily_report_auto_scheduler loop: %s", e_loop)
+
+        await asyncio.sleep(20)
+
+
+async def on_post_init(app: Application):
+    """Start background tasks on bot startup."""
+    asyncio.create_task(run_pending_auto_scheduler(app))
+    asyncio.create_task(run_daily_report_auto_scheduler(app))
+    # Clean up old accumulated temp dirs from previous sessions
+    await asyncio.to_thread(_cleanup_old_temp_bot_dirs)
+    # Pre-create fixed run-cache dirs so first /push is fast
+    for _cache_name in ("push_run", "total_run", "penalty_run", "speed_run",
+                        "tomorrow_run", "delayed_run", "report_run", "find_run"):
+        os.makedirs(os.path.join(HERE, "cache", _cache_name), exist_ok=True)
+
+
+@user_guard
+async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /schedule [on|off|status|run] command."""
+    await delete_group_command(update, context)
+    args = context.args or []
+    sub = args[0].lower() if args else "status"
+
+    cfg = load_config()
+
+    if sub in ("on", "enable", "resume", "start"):
+        cfg["telegram"]["paused"] = False
+        save_config(cfg)
+        msg = (
+            "✅ *Auto-Schedule ENABLED*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• Target 1: 🔴 GẤP- ĐIỀU HÀNH TỒN PHÁT (-1003964504795)\n"
+            "  Hours: 08:00, 14:00, 16:00\n"
+            "• Target 2: 🔴 QUALITY - METFONE EXPRESS (-5481716194)\n"
+            "  Hours: 08:00, 14:00, 16:00\n"
+            "• Reports: /total pending & /total (Summary Photos + Detailed Excels)\n"
+            "• Status: Active in background"
+        )
+    elif sub in ("off", "pause", "stop", "disable"):
+        cfg["telegram"]["paused"] = True
+        save_config(cfg)
+        msg = (
+            "⏸ *Auto-Schedule PAUSED*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• Target 1: 🔴 GẤP- ĐIỀU HÀNH TỒN PHÁT (-1003964504795)\n"
+            "• Target 2: 🔴 QUALITY - METFONE EXPRESS (-5481716194)\n"
+            "• Status: Paused\n\n"
+            "Use `/schedule on` or `/resume` to re-enable."
+        )
+    elif sub in ("run", "now", "force"):
+        # Reset state so scheduler triggers current slot immediately
+        state_file = os.path.join(HERE, "pending_schedule_state.json")
+        try:
+            if os.path.exists(state_file):
+                with open(state_file, "r", encoding="utf-8") as f:
+                    st = json.load(f)
+            else:
+                st = {}
+            st.pop("last_run_slot", None)
+            st.pop("completed_slots", None)
+            st.pop("failed_slot", None)
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(st, f, indent=2)
+        except Exception:
+            pass
+        msg = "🚀 Triggering scheduled reports (/total & /total pending) now..."
+    else:
+        paused = is_paused(cfg)
+        status_str = "⏸ PAUSED" if paused else "✅ ACTIVE"
+        msg = (
+            f"📅 *Auto-Schedule Status: {status_str}*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "• Target 1: 🔴 GẤP- ĐIỀU HÀNH TỒN PHÁT (-1003964504795)\n"
+            "  Hours: 08:00, 14:00, 16:00\n"
+            "• Target 2: 🔴 QUALITY - METFONE EXPRESS (-5481716194)\n"
+            "  Hours: 08:00, 14:00, 16:00\n"
+            "• Reports: /total pending & /total (Summary Photos + Detailed Excels)\n\n"
+            "Commands:\n"
+            "• `/schedule on` — Enable schedule mode\n"
+            "• `/schedule off` — Pause schedule mode\n"
+            "• `/schedule run` — Run scheduled report now"
+        )
+
+    await private_or_current_reply(update, context, msg, parse_mode="Markdown")
 
 
 @user_guard
@@ -966,8 +1746,15 @@ async def cmd_clean(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🗑 No reports found for today.")
             return
 
-        with open(REPORTS_LOG_PATH, encoding="utf-8") as f:
-            data = json.load(f)
+        data = {}
+        if os.path.exists(REPORTS_LOG_PATH):
+            with open(REPORTS_LOG_PATH, encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    try:
+                        data = json.loads(content)
+                    except json.JSONDecodeError:
+                        data = {}
 
         dirs_today = data.get(today_str, [])
         if not dirs_today:
@@ -1192,6 +1979,9 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Parse optional zone and force arguments
     args = [a.strip().lower() for a in (context.args or []) if a.strip()]
+    if update.message and update.message.text and update.message.text.lower().startswith('/pending'):
+        args.insert(0, 'pending')
+
     force_refresh = "force" in args
     args = [a for a in args if a != "force"]
 
@@ -1206,39 +1996,39 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stamp  = datetime.now().strftime("%d.%m_%HH%M")
             src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
             try:
-                downloader.download_detail(cfg["api"], src, force_refresh=force_refresh)
-                msg = await edit_or_send_requester_text(msg, update, context, "Building TỒN MEGA CHECK report...")
+                msg = await edit_or_send_requester_text(msg, update, context, "⏳ [1/4] Downloading latest TMS data...")
+                await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=force_refresh)
+
+                msg = await edit_or_send_requester_text(msg, update, context, "📊 [2/4] Processing MEGA1 & DVCMEGA1 pivots...")
                 import pivot
 
-                # 1. Combined Excel (Zone + Mega tables)
-                combined_xlsx = os.path.join(tmpdir, f"Report_MEGA_Combined_{stamp}.xlsx")
-                pivot.run_mega_combined(src, combined_xlsx, cfg)
-                img_combined = excel_to_image.excel_to_image(combined_xlsx)
-                img_combined.name = "mega_zone_combined.png"
-                await send_requester_photo(update, context, img_combined)
+                # Generate 2 separate pivot tables/images: MEGA1 and DVCMEGA1 (matching morning report)
+                rows = await asyncio.to_thread(pivot.read_source, src)
+                tree, day_keys, extra_data = await asyncio.to_thread(
+                    pivot.build_mega_pivot, rows, cfg.get("pivot", {}), cfg.get("zone_mapping", {})
+                )
 
-                # 2. Mega-only pivot Excel + image
-                mega_xlsx = os.path.join(tmpdir, f"Report_MEGA_{stamp}.xlsx")
-                _, grand_total = pivot.run_mega(src, mega_xlsx, cfg)
-                img_buf = excel_to_image.excel_to_image(mega_xlsx)
-                img_buf.name = "mega_check.png"
-                await send_requester_photo(update, context, img_buf)
-
-                caption = f"TỒN MEGA CHECK {datetime.now().strftime('%d/%m/%Y %H:%M')}\nGrand Total: {grand_total}"
-                with open(combined_xlsx, "rb") as f:
-                    await send_requester_document(
-                        update,
-                        context,
-                        f,
-                        os.path.basename(combined_xlsx),
-                        caption=caption,
-                    )
+                msg = await edit_or_send_requester_text(msg, update, context, "📸 [3/4] Rendering Hub images...")
+                last_hub_xlsx = None
+                for hub in ["MEGA1", "DVCMEGA1"]:
+                    if hub in tree and tree[hub]:
+                        sub_tree = {hub: tree[hub]}
+                        hub_xlsx = os.path.join(tmpdir, f"Report_{hub}_{stamp}.xlsx")
+                        await asyncio.to_thread(pivot.export_mega_pivot, sub_tree, day_keys, hub_xlsx, extra_data=extra_data)
+                        last_hub_xlsx = hub_xlsx
+                        try:
+                            img_buf = await asyncio.to_thread(excel_to_image.excel_to_image, hub_xlsx)
+                            img_buf.name = f"{hub}_check.png"
+                            await send_requester_photo(update, context, img_buf)
+                        except Exception as e_img:
+                            log.warning("Failed rendering photo for %s: %s", hub, e_img)
 
                 # Build detail Excel with actual order data for MEGA/HUB/DVC
+                msg = await edit_or_send_requester_text(msg, update, context, "📁 [4/4] Building detailed Excel...")
                 try:
                     import mega_detail
                     detail_xlsx = os.path.join(tmpdir, f"MEGA_Detail_{stamp}.xlsx")
-                    result_detail = mega_detail.build_mega_detail(src, detail_xlsx, cfg)
+                    result_detail = await asyncio.to_thread(mega_detail.build_mega_detail, rows, detail_xlsx, cfg)
                     total_orders = result_detail[0] if result_detail else 0
                     urgent_orders = result_detail[1] if result_detail else 0
                     with open(detail_xlsx, "rb") as f:
@@ -1250,9 +2040,76 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     log.warning("Failed to build mega detail Excel: %s", e)
 
-                await edit_or_send_requester_text(msg, update, context, f"Done. TỒN MEGA CHECK {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+                await edit_or_send_requester_text(msg, update, context, f"✅ Done. TỒN MEGA CHECK {datetime.now().strftime('%d.%m.%Y %H:%M')}")
             except Exception as e:
                 log.exception("Error in /total mega")
+                await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+            return
+
+        if zone_key in ("dvc", "dvczone"):
+            target_zone = args[1] if len(args) > 1 else None
+            zone_desc = f" ({target_zone.upper()})" if target_zone else " (ALL 5 ZONES)"
+            msg = await send_requester_text(update, context, f"⏳ Fetching data for DVC BY ZONE REPORT{zone_desc}...")
+            tmpdir = tempfile.mkdtemp(prefix="dvc_")
+            track_report_dir(tmpdir)
+            stamp  = datetime.now().strftime("%d.%m_%HH%M")
+            src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+            try:
+                msg = await edit_or_send_requester_text(msg, update, context, "⏳ [1/4] Downloading latest TMS data...")
+                await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=force_refresh)
+
+                msg = await edit_or_send_requester_text(msg, update, context, "📊 [2/4] Processing DVC Hub by Zone pivots...")
+                import dvc_report
+
+                rows = await asyncio.to_thread(dvc_report.read_source, src)
+                tree, day_keys, extra_data, dvc_rows = await asyncio.to_thread(
+                    dvc_report.build_dvc_zone_pivot, rows, target_zone=target_zone,
+                    exclude_test=cfg.get("pivot", {}).get("exclude_test", True),
+                    test_keywords=cfg.get("pivot", {}).get("test_keywords", ["test"])
+                )
+
+                if not dvc_rows or not tree:
+                    await edit_or_send_requester_text(msg, update, context, "⚠️ No DVC orders found for current filter.")
+                    return
+
+                msg = await edit_or_send_requester_text(msg, update, context, "📸 [3/4] Rendering DVC Zone dashboard image...")
+                hub_xlsx = os.path.join(tmpdir, f"Report_DVC_Zone_{stamp}.xlsx")
+                tot_orders, urg_orders = await asyncio.to_thread(
+                    dvc_report.export_dvc_zone_pivot, tree, day_keys, hub_xlsx, extra_data=extra_data
+                )
+                try:
+                    img_buf = await asyncio.to_thread(excel_to_image.excel_to_image, hub_xlsx)
+                    img_buf.name = f"DVC_Zone_Report_{stamp}.png"
+                    await send_requester_photo(
+                        update, context, img_buf,
+                        caption=f"📦 DVC HUB BY ZONE REPORT — {datetime.now().strftime('%d/%m/%Y %H:%M')}\nTotal: {tot_orders:,} | Urgent: {urg_orders:,}"
+                    )
+                except Exception as e_img:
+                    log.warning("Failed rendering photo for DVC Zone: %s", e_img)
+
+                # Build detailed Excel with all DVC orders
+                msg = await edit_or_send_requester_text(msg, update, context, "📁 [4/4] Building detailed Excel...")
+                try:
+                    detail_xlsx = os.path.join(tmpdir, f"DVC_Zone_Detail_{stamp}.xlsx")
+                    d_tot, d_urg = await asyncio.to_thread(dvc_report.build_dvc_zone_detail, dvc_rows, detail_xlsx, cfg)
+                    with open(detail_xlsx, "rb") as f:
+                        await send_requester_document(
+                            update, context, f,
+                            os.path.basename(detail_xlsx),
+                            caption=(
+                                f"📋 ទិន្នន័យលម្អិត DVC Hub {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                                f"Total: {d_tot:,} | Urgent: {d_urg:,}"
+                            ),
+                        )
+                except Exception as e:
+                    log.warning("Failed to build DVC detail Excel: %s", e)
+
+                await edit_or_send_requester_text(
+                    msg, update, context,
+                    f"✅ Done. DVC BY ZONE REPORT {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+                )
+            except Exception as e:
+                log.exception("Error in /total dvc")
                 await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
             return
 
@@ -1277,19 +2134,10 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     log.warning("Failed to render penalty summary image: %s", e)
 
-                caption = (
-                    f"📊 *EXECUTIVE PENALTY DASHBOARD ({target_label.upper()})*\n"
-                    f"📦 Total Handover: `{tot_ho}` | 🚚 Total Delivery: `{tot_del}`\n"
-                    f"⚠️ Penalized Bills: `{tot_pen_cnt}`\n"
-                    f"💰 Total Penalty: `-${tot_fine:.2f}`\n\n"
-                    f"_• SLA Penalty: 1-2 Days (-$0.10) | ≥ 3 Days (-$0.40)_\n"
-                    f"_• Excused (Status 420/472): $0.00 fine_"
-                )
                 with open(out_xlsx, "rb") as f:
                     await send_requester_document(
                         update, context, f,
-                        os.path.basename(out_xlsx),
-                        caption=caption
+                        os.path.basename(out_xlsx)
                     )
                 await edit_or_send_requester_text(msg, update, context, f"✅ Done! Sent INVENTORY PENALTY REPORT ({target_label.upper()}).")
             except Exception as e:
@@ -1318,25 +2166,49 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     log.warning("Failed to render speed summary image: %s", e)
 
-                fast_pct = ((tot_u2 + tot_24) / tot_del * 100) if tot_del > 0 else 0
-                caption = (
-                    f"⏱️ *EXECUTIVE DELIVERY SPEED DASHBOARD ({target_label.upper()})*\n"
-                    f"📦 Total Delivered (410): `{tot_del}`\n"
-                    f"🟢 < 2 Hours (+50%): `{tot_u2}`\n"
-                    f"🔵 2 - 4 Hours (+25%): `{tot_24}`\n"
-                    f"🔴 > 8 Hours (-25%): `{tot_o8}`\n"
-                    f"⚡ Fast Delivery Rate (<4h): `{fast_pct:.1f}%`\n"
-                    f"💵 Total Commission: `${tot_pay:.2f}`"
-                )
                 with open(out_xlsx, "rb") as f:
                     await send_requester_document(
                         update, context, f,
-                        os.path.basename(out_xlsx),
-                        caption=caption
+                        os.path.basename(out_xlsx)
                     )
                 await edit_or_send_requester_text(msg, update, context, f"✅ Done! Sent EXECUTIVE DELIVERY SPEED DASHBOARD ({target_label.upper()}).")
             except Exception as e:
                 log.exception("Error in /total speed")
+        if zone_key in ("pending", "ton"):
+            target_label = " ".join(args[1:]) if len(args) > 1 else "ALL"
+            msg = await send_requester_text(update, context, f"⏳ Generating TOTAL PENDING REPORT ({target_label.upper()})...")
+            tmpdir = tempfile.mkdtemp(prefix="pending_")
+            track_report_dir(tmpdir)
+            stamp  = datetime.now().strftime("%d.%m_%HH%M")
+            src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+            try:
+                msg = await edit_or_send_requester_text(msg, update, context, "⏳ [1/3] Downloading latest TMS data...")
+                await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=force_refresh)
+
+                msg = await edit_or_send_requester_text(msg, update, context, "📊 [2/3] Processing TOTAL PENDING audit data...")
+                import total_pending_report
+                summary_df, grand_total, df_detail = await asyncio.to_thread(total_pending_report.process_pending_data, src)
+                
+                out_xlsx = os.path.join(tmpdir, f"TOTAL_PENDING_{stamp}.xlsx")
+                await asyncio.to_thread(total_pending_report.export_total_pending_excel, summary_df, grand_total, df_detail, out_xlsx)
+                
+                msg = await edit_or_send_requester_text(msg, update, context, "📸 [3/3] Rendering Executive summary image...")
+                text_caption = total_pending_report.format_pending_text_summary(summary_df, grand_total)
+                try:
+                    img_buf = await asyncio.to_thread(total_pending_report.render_total_pending_image, summary_df, grand_total, xlsx_path=out_xlsx)
+                    img_buf.name = f"TOTAL_PENDING_{stamp}.png"
+                    await send_requester_photo(update, context, img_buf, caption=text_caption, parse_mode="Markdown")
+                except Exception as e_img:
+                    log.warning("Failed rendering photo for total pending: %s", e_img)
+
+                with open(out_xlsx, "rb") as f:
+                    await send_requester_document(
+                        update, context, f,
+                        os.path.basename(out_xlsx)
+                    )
+                await edit_or_send_requester_text(msg, update, context, f"✅ Done! TOTAL PENDING REPORT {stamp}")
+            except Exception as e:
+                log.exception("Error in /total pending")
                 await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
             return
 
@@ -1357,8 +2229,7 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await send_requester_text(update, context, f"Fetching data for {zone_label} summary...")
 
-    tmpdir = tempfile.mkdtemp(prefix="total_")
-    track_report_dir(tmpdir)
+    tmpdir = _make_run_cache("total_run")
     stamp  = datetime.now().strftime("%d.%m_%HH%M")
     src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
 
@@ -1366,9 +2237,13 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
         downloader.download_detail(cfg["api"], src, force_refresh=force_refresh)
         msg = await edit_or_send_requester_text(msg, update, context, "Building summary...")
 
+        cache_dir = os.path.join(HERE, "cache")
+        rev_cache = os.path.join(cache_dir, "latest_revenue.xlsx")
         mode = get_mode(cfg)
-        result = generate_report.generate_reports_from_data(
+        result = await asyncio.to_thread(
+            generate_report.generate_reports_from_data,
             src, REF_PATH, tmpdir, return_metadata=True, mode=mode,
+            revenue_path=rev_cache if os.path.exists(rev_cache) else None
         )
         update_webapp_cache(result)
         save_highlight_history(result)
@@ -1381,15 +2256,17 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if hr["handle"] in zone_filter
             ]
             # Recalculate overall_counts from filtered handles
-            overall = {"Pickup": 0, "Delivery": 0, "Pending": 0}
+            overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
             for hr in result["handle_results"]:
-                for k in overall:
-                    overall[k] += hr["handle_counts"].get(k, 0)
+                hc = hr.get("handle_counts", {})
+                overall["Pickup"] += hc.get("Pickup", 0)
+                overall["Delivery"] += hc.get("Delivery", 0)
+                overall["Transit"] += hc.get("Transit", 0) or hc.get("Send Mega", 0)
+                overall["Branch"] += hc.get("Branch", 0) or hc.get("Not Assign", 0)
             result["overall_counts"] = overall
 
             # Filter type_data DataFrames
-            import pandas as pd
-            for rn in ["Pickup", "Delivery", "Pending"]:
+            for rn in list(result.get("type_data", {}).keys()):
                 df = result.get("type_data", {}).get(rn)
                 if df is not None and not df.empty:
                     filter_col = "POST OFFICE HANDLE"
@@ -1402,71 +2279,191 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Calculate day_date_counts and urgent_counts for /total image
         total_day_date_counts = {}
         total_urgent_counts   = {}
-        urgent_by_type        = {"Pickup": 0, "Delivery": 0, "Pending": 0}
+        urgent_by_type        = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
         today_date = datetime.now().date()
-        import pandas as pd
+        today_ts = pd.Timestamp.now().normalize()
 
-        for rn in ["Pickup", "Delivery", "Pending"]:
-            df_z = result.get("type_data", {}).get(rn)
-            if df_z is None or df_z.empty:
+        total_fee_counts = {}
+        total_cod_counts = {}
+
+        canonical_rn_map = {
+            "Pickup": "Pickup",
+            "Delivery": "Delivery",
+            "Not Assign": "Branch",
+            "Branch": "Branch",
+            "Send Mega": "Transit",
+            "Transit": "Transit",
+        }
+
+        processed_dfs = set()
+        for rn, df_z in (result.get("type_data") or {}).items():
+            if df_z is None or df_z.empty or id(df_z) in processed_dfs:
                 continue
+            processed_dfs.add(id(df_z))
+
+            canon_key = canonical_rn_map.get(rn, rn)
+            handle_col = "POST OFFICE HANDLE"
+            if handle_col not in df_z.columns:
+                continue
+
+            df_z = df_z.copy()
+            df_z["_h_upper"] = df_z[handle_col].fillna("").astype(str).str.strip().str.upper()
+            df_z = df_z[df_z["_h_upper"] != ""]
+            df_z = df_z[~df_z["_h_upper"].apply(lambda h: len(h) >= 4 and h[3] in ('A', 'S'))]
+            if df_z.empty:
+                continue
+
+            # 14-day date column counts
             date_col_z = result.get("date_col") or (
                 "CREATED DATE" if "CREATED DATE" in df_z.columns else
                 "CURRENT TIME"  if "CURRENT TIME"  in df_z.columns else None
             )
             if date_col_z and date_col_z in df_z.columns:
-                parsed_z = pd.to_datetime(df_z[date_col_z], dayfirst=True,
-                                          format="mixed", errors="coerce")
-                df_z = df_z.copy()
+                parsed_z = pd.to_datetime(df_z[date_col_z], dayfirst=True, format="mixed", errors="coerce")
                 df_z["_zdate"] = parsed_z.dt.date
+                days_diff = (today_ts - parsed_z.dt.normalize()).dt.days
+                df_recent = df_z[parsed_z.notna() & (days_diff <= 14)]
+                if not df_recent.empty:
+                    date_grp = df_recent.groupby(["_h_upper", "_zdate"]).size()
+                    for (h, d_val), cnt in date_grp.items():
+                        if h not in total_day_date_counts:
+                            total_day_date_counts[h] = {}
+                        total_day_date_counts[h][d_val] = total_day_date_counts[h].get(d_val, 0) + int(cnt)
 
-            handle_col = "POST OFFICE HANDLE"
-            if handle_col not in df_z.columns:
-                continue
+            # Urgent counts (>1 day and >=3 days)
+            if "CREATED DATE" in df_z.columns:
+                cd_parsed = pd.to_datetime(df_z["CREATED DATE"], dayfirst=True, format="mixed", errors="coerce")
+                days_old = (today_ts - cd_parsed.dt.normalize()).dt.days
 
-            for _, row_z in df_z.iterrows():
-                h = str(row_z.get(handle_col, "")).strip().upper()
-                if not h:
-                    continue
-                d_val = row_z.get("_zdate") if "_zdate" in df_z.columns else None
-                if d_val and not pd.isna(d_val):
-                    total_day_date_counts.setdefault(h, {})
-                    total_day_date_counts[h][d_val] = total_day_date_counts[h].get(d_val, 0) + 1
-                created_d = None
-                if "CREATED DATE" in df_z.columns:
-                    cd = pd.to_datetime(row_z.get("CREATED DATE"), dayfirst=True,
-                                        format="mixed", errors="coerce")
-                    if not pd.isna(cd):
-                        created_d = cd.date()
-                if created_d and (today_date - created_d).days > 1:
-                    if h not in total_urgent_counts:
-                        total_urgent_counts[h] = {"Pickup": 0, "Delivery": 0, "Pending": 0}
-                    total_urgent_counts[h][rn] = total_urgent_counts[h].get(rn, 0) + 1
-                    urgent_by_type[rn] += 1
+                df_ge1 = df_z[days_old >= 1]
+                if not df_ge1.empty:
+                    urgent_by_type[canon_key] = urgent_by_type.get(canon_key, 0) + len(df_ge1)
+                    ge1_grp = df_ge1.groupby("_h_upper").size()
+                    for h, cnt in ge1_grp.items():
+                        if h not in total_urgent_counts:
+                            total_urgent_counts[h] = {"1day": 0, "3days": 0}
+                        total_urgent_counts[h]["1day"] += int(cnt)
+
+                df_ge3 = df_z[days_old >= 3]
+                if not df_ge3.empty:
+                    ge3_grp = df_ge3.groupby("_h_upper").size()
+                    for h, cnt in ge3_grp.items():
+                        if h not in total_urgent_counts:
+                            total_urgent_counts[h] = {"1day": 0, "3days": 0}
+                        total_urgent_counts[h]["3days"] += int(cnt)
+
+            # Fee sum per handle
+            fee_col = next((c for c in df_z.columns if 'FEE' in c.upper()), None)
+            if fee_col:
+                fee_nums = pd.to_numeric(df_z[fee_col], errors="coerce").fillna(0)
+                df_fee = df_z[fee_nums > 0].copy()
+                if not df_fee.empty:
+                    df_fee["_fee_val"] = fee_nums[fee_nums > 0]
+                    fee_grp = df_fee.groupby("_h_upper")["_fee_val"].sum()
+                    for h, f_v in fee_grp.items():
+                        total_fee_counts[h] = total_fee_counts.get(h, 0.0) + float(f_v)
+
+            # COD sum per handle
+            cod_col = next((c for c in df_z.columns if 'COD' in c.upper()), None)
+            if cod_col:
+                cod_nums = pd.to_numeric(df_z[cod_col], errors="coerce").fillna(0)
+                df_cod = df_z[cod_nums > 0].copy()
+                if not df_cod.empty:
+                    df_cod["_cod_val"] = cod_nums[cod_nums > 0]
+                    cod_grp = df_cod.groupby("_h_upper")["_cod_val"].sum()
+                    for h, c_v in cod_grp.items():
+                        total_cod_counts[h] = total_cod_counts.get(h, 0.0) + float(c_v)
 
         overall = result["overall_counts"]
+        for k in urgent_by_type:
+            urgent_by_type[k] = min(urgent_by_type[k], overall.get(k, 0))
+
         grand_total = sum(overall.values())
         total_urgent_sum = sum(urgent_by_type.values())
 
         # Build final formatted caption
         result["summary_caption"] = "\n".join([
             f"📋 {zone_label} Report  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-            f"Pickup: {overall['Pickup']} (Urgent: {urgent_by_type['Pickup']})  |  "
-            f"Delivery: {overall['Delivery']} (Urgent: {urgent_by_type['Delivery']})  |  "
-            f"Pending: {overall['Pending']} (Urgent: {urgent_by_type['Pending']})",
+            f"Pickup: {overall.get('Pickup', 0)} (Urgent: {urgent_by_type.get('Pickup', 0)})  |  "
+            f"Delivery: {overall.get('Delivery', 0)} (Urgent: {urgent_by_type.get('Delivery', 0)})  |  "
+            f"Transit: {overall.get('Transit', 0) or overall.get('Send Mega', 0)} (Urgent: {urgent_by_type.get('Transit', 0)})  |  "
+            f"Branch: {overall.get('Branch', 0) or overall.get('Not Assign', 0)} (Urgent: {urgent_by_type.get('Branch', 0)})",
             f"Grand Total: {grand_total}  |  Total Urgent: {total_urgent_sum}",
         ])
 
-        # 1. Summary image — totals per handle
-        img_buf = generate_summary.build_summary_image(
-            result["handle_results"],
-            result["overall_counts"],
-            zone_label=zone_label,
-            day_date_counts=total_day_date_counts if total_day_date_counts else None,
-            urgent_counts=total_urgent_counts if total_urgent_counts else None,
-        )
-        img_buf.name = "summary.png"
-        await send_requester_photo(update, context, img_buf)
+        # 1. Summary image — totals per handle (2 pictures for PNP Area and Provincial Branches)
+        pnp_handles = [hr for hr in result["handle_results"] if hr["handle"].upper().startswith("PNP") or hr["handle"].upper().startswith("KAN")]
+        prov_handles = [hr for hr in result["handle_results"] if not (hr["handle"].upper().startswith("PNP") or hr["handle"].upper().startswith("KAN"))]
+
+        if not zone_filter and pnp_handles and prov_handles:
+            # Send Pic 1: Phnom Penh Area
+            pnp_overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
+            for hr in pnp_handles:
+                hc = hr.get("handle_counts", {})
+                pnp_overall["Pickup"] += hc.get("Pickup", 0)
+                pnp_overall["Delivery"] += hc.get("Delivery", 0)
+                pnp_overall["Transit"] += hc.get("Transit", 0) or hc.get("Send Mega", 0)
+                pnp_overall["Branch"] += hc.get("Branch", 0) or hc.get("Not Assign", 0)
+            
+            pnp_tot = sum(pnp_overall.values())
+            pnp_caption = "\n".join([
+                f"📋 PHNOM PENH AREA  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+                f"Pickup: {pnp_overall['Pickup']}  |  Delivery: {pnp_overall['Delivery']}  |  Transit: {pnp_overall['Transit']}  |  Branch: {pnp_overall['Branch']}",
+                f"Total: {pnp_tot}",
+            ])
+            img_pnp = generate_summary.build_summary_image(
+                pnp_handles,
+                pnp_overall,
+                zone_label="PHNOM PENH AREA",
+                day_date_counts=total_day_date_counts if total_day_date_counts else None,
+                urgent_counts=total_urgent_counts if total_urgent_counts else None,
+                fee_counts=total_fee_counts if total_fee_counts else None,
+                cod_counts=total_cod_counts if total_cod_counts else None,
+                vip_counts=result.get("vip_counts"),
+            )
+            img_pnp.name = "summary_pnp.png"
+            await send_requester_photo(update, context, img_pnp, caption=pnp_caption)
+
+            # Send Pic 2: Provincial Branches
+            prov_overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
+            for hr in prov_handles:
+                hc = hr.get("handle_counts", {})
+                prov_overall["Pickup"] += hc.get("Pickup", 0)
+                prov_overall["Delivery"] += hc.get("Delivery", 0)
+                prov_overall["Transit"] += hc.get("Transit", 0) or hc.get("Send Mega", 0)
+                prov_overall["Branch"] += hc.get("Branch", 0) or hc.get("Not Assign", 0)
+
+            prov_tot = sum(prov_overall.values())
+            prov_caption = "\n".join([
+                f"📋 PROVINCIAL BRANCHES  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+                f"Pickup: {prov_overall['Pickup']}  |  Delivery: {prov_overall['Delivery']}  |  Transit: {prov_overall['Transit']}  |  Branch: {prov_overall['Branch']}",
+                f"Total: {prov_tot}",
+            ])
+            img_prov = generate_summary.build_summary_image(
+                prov_handles,
+                prov_overall,
+                zone_label="PROVINCIAL BRANCHES",
+                day_date_counts=total_day_date_counts if total_day_date_counts else None,
+                urgent_counts=total_urgent_counts if total_urgent_counts else None,
+                fee_counts=total_fee_counts if total_fee_counts else None,
+                cod_counts=total_cod_counts if total_cod_counts else None,
+                vip_counts=result.get("vip_counts"),
+            )
+            img_prov.name = "summary_prov.png"
+            await send_requester_photo(update, context, img_prov, caption=prov_caption)
+        else:
+            img_buf = generate_summary.build_summary_image(
+                result["handle_results"],
+                result["overall_counts"],
+                zone_label=zone_label,
+                day_date_counts=total_day_date_counts if total_day_date_counts else None,
+                urgent_counts=total_urgent_counts if total_urgent_counts else None,
+                fee_counts=total_fee_counts if total_fee_counts else None,
+                cod_counts=total_cod_counts if total_cod_counts else None,
+                vip_counts=result.get("vip_counts"),
+            )
+            img_buf.name = "summary.png"
+            await send_requester_photo(update, context, img_buf, caption=result["summary_caption"])
 
         # 2. Total Excel — 3 tables on one sheet (Pickup / Delivery / Pending)
         label = f"Total_{zone_label}_" if zone_filter else "Total_"
@@ -1487,6 +2484,532 @@ async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.exception("Error in /total")
         await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+
+
+@pm_required_handler
+async def cmd_penalty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generates Stagnant Inventory & Handover Penalty Report and forwards to Zone and Branch groups."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    is_ytd = any(a.lower() in ("ytd", "yesterday", "homqua") for a in args)
+    skip_zone = any(a.lower() in ("nozone", "nozones", "no_zone", "skipzone", "skipzones", "branch", "branches", "branch_only") for a in args)
+    skip_branch = any(a.lower() in ("nobranch", "nobranches", "no_branch", "skipbranch", "skipbranches", "zone_only") for a in args)
+    no_fwd = any(a.lower() in ("nofwd", "no_fwd", "onlyme", "me", "self", "quiet") for a in args)
+    force_refresh = any(a.lower() in ("new", "refresh", "force") for a in args)
+
+    ignore_tokens = {
+        "ytd", "yesterday", "homqua", "new", "refresh", "force",
+        "nozone", "nozones", "no_zone", "skipzone", "skipzones", "branch", "branches", "branch_only",
+        "nobranch", "nobranches", "no_branch", "skipbranch", "skipbranches", "zone_only",
+        "nofwd", "no_fwd", "onlyme", "me", "self", "quiet"
+    }
+    filtered_args = [a for a in args if a.lower() not in ignore_tokens]
+    target_label = " ".join(filtered_args) if filtered_args else "ALL"
+    target_date = (datetime.now().date() - timedelta(days=1)) if is_ytd else datetime.now().date()
+
+    ytd_tag = f" — YESTERDAY {target_date.strftime('%d/%m/%Y')}" if is_ytd else ""
+    msg = await send_requester_text(update, context, f"⏳ Generating INVENTORY PENALTY REPORT ({target_label.upper()}{ytd_tag})...")
+    tmpdir = _make_run_cache("penalty_run")
+    stamp = datetime.now().strftime("%d.%m_%HH%M")
+    src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+
+    try:
+        downloader.download_detail(cfg["api"], src, force_refresh=force_refresh)
+        import penalty_report
+        safe_label = "".join(c for c in target_label if c.isalnum() or c in ("-", "_")).strip() or "ALL"
+        suffix_file = "_YTD" if is_ytd else ""
+        out_xlsx = os.path.join(tmpdir, f"INVENTORY_PENALTY_REPORT_{stamp}_{safe_label}{suffix_file}.xlsx")
+        tot_ho, tot_del, tot_pen_cnt, tot_fine = penalty_report.build_penalty_report(src, out_xlsx, target_label=target_label, report_date=target_date)
+
+        # 1. Render Summary Image & send to requester
+        try:
+            img_buf = penalty_report.render_penalty_summary_image(out_xlsx)
+            img_buf.name = f"PENALTY_SUMMARY_{safe_label}{suffix_file}.png"
+            await send_requester_photo(update, context, img_buf)
+        except Exception as e_img:
+            log.warning("Could not render penalty summary image: %s", e_img)
+
+        # 2. Send Excel Document to requester
+        with open(out_xlsx, "rb") as f:
+            await send_requester_document(update, context, f, os.path.basename(out_xlsx))
+
+        # 3. Group Forwarding (When target is ALL, MEGA, or TOTAL)
+        tgt_upper = target_label.upper().replace(" ", "")
+        total_sent_zones = 0
+        total_sent_branches = 0
+
+        if is_paused(cfg):
+            await send_requester_text(update, context, "⏸ Bot is paused — forwarding to groups skipped (test only).")
+            return
+
+        if tgt_upper in ("ALL", "TOTAL", "MEGA") and not no_fwd:
+            sender_bot = get_group_sender_bot(context)
+            # A. Forward to 5 Zone Groups (Unless skip_zone)
+            if not skip_zone:
+                zone_fwd_map = cfg.get("zone_forward_mapping", {})
+                for z_idx in range(1, 6):
+                    z_name = f"Zone {z_idx}"
+                    z_clean = f"zone{z_idx}"
+                    z_xlsx = os.path.join(tmpdir, f"INVENTORY_PENALTY_REPORT_{stamp}_{z_name.replace(' ', '_')}{suffix_file}.xlsx")
+                    z_ho, z_del, z_pen, z_fine = penalty_report.build_penalty_report(src, z_xlsx, target_label=z_name, report_date=target_date)
+                    z_caption = (
+                        f"📊 *INVENTORY & SLA PENALTY REPORT ({z_name}{ytd_tag})*\n"
+                        f"Total Handover: `{z_ho}`\n"
+                        f"Total Delivery: `{z_del}`\n"
+                        f"Penalized Bills: `{z_pen}`\n"
+                        f"Total Fine: `${z_fine:.2f}`"
+                    )
+
+                    for gid, zkey in zone_fwd_map.items():
+                        if str(zkey).lower().strip() == z_clean:
+                            try:
+                                z_img = penalty_report.render_penalty_summary_image(z_xlsx)
+                                z_img.name = f"PENALTY_SUMMARY_{z_name.replace(' ', '_')}{suffix_file}.png"
+                                await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=z_img, caption=z_caption, parse_mode="Markdown")
+                            except Exception as e_fwd_img:
+                                log.warning("Failed forwarding penalty photo to zone group %s: %s", gid, e_fwd_img)
+
+                            try:
+                                with open(z_xlsx, "rb") as z_f_doc:
+                                    await safe_api_call(
+                                        sender_bot.send_document,
+                                        chat_id=int(gid),
+                                        document=z_f_doc,
+                                        filename=os.path.basename(z_xlsx)
+                                    )
+                                total_sent_zones += 1
+                            except Exception as e_fwd_doc:
+                                log.warning("Failed forwarding penalty doc to zone group %s: %s", gid, e_fwd_doc)
+
+            # B. Forward to 36 Branch Groups in forward_mapping (Unless skip_branch)
+            if not skip_branch:
+                fwd_map = get_forward_mapping(cfg)
+                for gid, handles in fwd_map.items():
+                    if not handles or "*" in handles:
+                        continue
+                    br_code = handles[0].upper()
+                    if br_code not in penalty_report.MAIN_36_BRANCHES:
+                        continue
+
+                    br_xlsx = os.path.join(tmpdir, f"INVENTORY_PENALTY_REPORT_{stamp}_{br_code}{suffix_file}.xlsx")
+                    try:
+                        b_ho, b_del, b_pen, b_fine = penalty_report.build_penalty_report(src, br_xlsx, target_label=br_code, report_date=target_date)
+                        b_caption = (
+                            f"📊 *INVENTORY & SLA PENALTY REPORT ({br_code}{ytd_tag})*\n"
+                            f"Total Handover: `{b_ho}`\n"
+                            f"Total Delivery: `{b_del}`\n"
+                            f"Penalized Bills: `{b_pen}`\n"
+                            f"Total Fine: `${b_fine:.2f}`"
+                        )
+
+                        try:
+                            b_img = penalty_report.render_penalty_summary_image(br_xlsx)
+                            b_img.name = f"PENALTY_SUMMARY_{br_code}{suffix_file}.png"
+                            await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=b_img, caption=b_caption, parse_mode="Markdown")
+                        except Exception as e_b_img:
+                            log.warning("Failed sending penalty photo to branch group %s: %s", br_code, e_b_img)
+
+                        try:
+                            with open(br_xlsx, "rb") as b_f_doc:
+                                await safe_api_call(
+                                    sender_bot.send_document,
+                                    chat_id=int(gid),
+                                    document=b_f_doc,
+                                    filename=os.path.basename(br_xlsx)
+                                )
+                            total_sent_branches += 1
+                        except Exception as e_b_doc:
+                            log.warning("Failed sending penalty doc to branch group %s: %s", br_code, e_b_doc)
+                    except Exception as e_br_gen:
+                        log.warning("Failed building penalty report for branch %s: %s", br_code, e_br_gen)
+
+        fwd_status_msg = ""
+        if total_sent_zones > 0 or total_sent_branches > 0:
+            fwd_status_msg = f" (Forwarded to {total_sent_zones} Zone groups & {total_sent_branches} Branch groups)"
+        elif no_fwd or skip_branch and skip_zone:
+            fwd_status_msg = " [Private / No-Forward Mode]"
+
+        await edit_or_send_requester_text(msg, update, context, f"✅ Done! Sent INVENTORY PENALTY REPORT ({target_label.upper()}){fwd_status_msg}.")
+    except Exception as e:
+        log.exception("Error in /penalty command: %s", e)
+        await edit_or_send_requester_text(msg, update, context, f"❌ Error generating penalty report: {e}")
+
+
+@pm_required_handler
+async def cmd_speed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generates Delivery Speed SLA Report."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    is_ytd = any(a.lower() in ("ytd", "yesterday", "homqua") for a in args)
+    skip_zone = any(a.lower() in ("nozone", "nozones", "no_zone", "skipzone", "skipzones", "branch", "branches", "branch_only") for a in args)
+    skip_branch = any(a.lower() in ("nobranch", "nobranches", "no_branch", "skipbranch", "skipbranches", "zone_only") for a in args)
+    no_fwd = any(a.lower() in ("nofwd", "no_fwd", "onlyme", "me", "self", "quiet") for a in args)
+    force_refresh = any(a.lower() in ("new", "refresh", "force") for a in args)
+
+    ignore_tokens = {
+        "ytd", "yesterday", "homqua",
+        "new", "refresh", "force",
+        "nozone", "nozones", "no_zone", "skipzone", "skipzones", "branch", "branches", "branch_only",
+        "nobranch", "nobranches", "no_branch", "skipbranch", "skipbranches", "zone_only",
+        "nofwd", "no_fwd", "onlyme", "me", "self", "quiet"
+    }
+    filtered_args = [a for a in args if a.lower() not in ignore_tokens]
+    target_label = " ".join(filtered_args) if filtered_args else "ALL"
+    target_date = (datetime.now().date() - timedelta(days=1)) if is_ytd else datetime.now().date()
+    ytd_tag = f" — YESTERDAY {target_date.strftime('%d/%m/%Y')}" if is_ytd else ""
+    suffix_file = "_YTD" if is_ytd else ""
+
+    msg = await send_requester_text(update, context, f"⏳ [1/3] Downloading TMS data ({target_label.upper()}{ytd_tag})...")
+    tmpdir = _make_run_cache("speed_run")
+    stamp = datetime.now().strftime("%d.%m_%HH%M")
+    src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+
+    try:
+        await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=force_refresh)
+        
+        await edit_or_send_requester_text(msg, update, context, f"⏳ [2/3] Processing VTT speed SLA metrics ({target_label.upper()}{ytd_tag})...")
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+        rev_file = os.path.join(cache_dir, "latest_revenue.xlsx")
+        try:
+            await asyncio.to_thread(downloader.download_revenue_detail, cfg["api"], rev_file, force_refresh=force_refresh)
+        except Exception as e_rev:
+            log.warning("Could not refresh revenue detail for /speed: %s", e_rev)
+
+        import speed_report
+        shared_df, shared_vas_map = await asyncio.to_thread(speed_report.load_speed_context, src, rev_file)
+        safe_label = "".join(c for c in target_label if c.isalnum() or c in ("-", "_")).strip() or "ALL"
+        out_xlsx = os.path.join(tmpdir, f"DELIVERY_SPEED_REPORT_{stamp}_{safe_label}{suffix_file}.xlsx")
+        tot_del, tot_u2, tot_24, tot_o8, tot_pay = await asyncio.to_thread(
+            speed_report.build_speed_report, src, out_xlsx, target_label=target_label, report_date=target_date, revenue_path=rev_file,
+            preloaded_df=shared_df, preloaded_vas_map=shared_vas_map
+        )
+
+        # 1. Render Summary Image
+        await edit_or_send_requester_text(msg, update, context, f"⏳ [3/3] Rendering clean dashboard image ({target_label.upper()}{ytd_tag})...")
+        try:
+            img_buf = await asyncio.to_thread(speed_report.render_speed_summary_image, out_xlsx)
+            img_buf.name = f"speed_summary_{stamp}{suffix_file}.png"
+            await send_requester_photo(update, context, img_buf)
+        except Exception as e_img:
+            log.warning("Could not render speed summary image: %s", e_img)
+
+        # 2. Send Excel Document
+        with open(out_xlsx, "rb") as f:
+            await send_requester_document(update, context, f, os.path.basename(out_xlsx))
+
+        # 3. Group Forwarding
+        tgt_upper = target_label.upper().replace(" ", "")
+        total_sent_zones = 0
+        total_sent_branches = 0
+
+        if is_paused(cfg):
+            await edit_or_send_requester_text(msg, update, context, "⏸ Bot is paused — forwarding to groups skipped (test only).")
+            return
+
+        if not no_fwd:
+            sender_bot = get_group_sender_bot(context)
+            # A. Forward to 5 Zone Groups (Unless skip_zone)
+            if not skip_zone and (tgt_upper in ("ALL", "TOTAL", "MEGA") or tgt_upper.startswith("ZONE")):
+                zone_fwd_map = cfg.get("zone_forward_mapping", {})
+                for z_idx in range(1, 6):
+                    z_name = f"Zone {z_idx}"
+                    z_clean = f"zone{z_idx}"
+                    if tgt_upper.startswith("ZONE") and tgt_upper != z_clean.upper():
+                        continue
+                    z_xlsx = os.path.join(tmpdir, f"DELIVERY_SPEED_REPORT_{stamp}_{z_name.replace(' ', '_')}{suffix_file}.xlsx")
+                    try:
+                        z_del, z_u2, z_24, z_o8, z_pay = await asyncio.to_thread(
+                            speed_report.build_speed_report, src, z_xlsx, target_label=z_name, report_date=target_date, revenue_path=rev_file,
+                            preloaded_df=shared_df, preloaded_vas_map=shared_vas_map
+                        )
+                        z_caption = (
+                            f"⚡ *DELIVERY SPEED SLA REPORT ({z_name}{ytd_tag})*\n"
+                            f"Total Delivered (410): `{z_del}`\n"
+                            f"< 2 Hours (+50%): `{z_u2}`\n"
+                            f"2 - 4 Hours (+25%): `{z_24}`\n"
+                            f"> 8 Hours (-25%): `{z_o8}`\n"
+                            f"Total Commission: `${z_pay:.2f}`"
+                        )
+
+                        for gid, zkey in zone_fwd_map.items():
+                            if str(zkey).lower().strip() == z_clean:
+                                try:
+                                    z_img = await asyncio.to_thread(speed_report.render_speed_summary_image, z_xlsx)
+                                    z_img.name = f"SPEED_SUMMARY_{z_name.replace(' ', '_')}{suffix_file}.png"
+                                    await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=z_img, caption=z_caption, parse_mode="Markdown")
+                                except Exception as e_fwd_img:
+                                    log.warning("Failed forwarding speed photo to zone group %s: %s", gid, e_fwd_img)
+
+                                try:
+                                    with open(z_xlsx, "rb") as z_f_doc:
+                                        await safe_api_call(
+                                            sender_bot.send_document,
+                                            chat_id=int(gid),
+                                            document=z_f_doc,
+                                            filename=os.path.basename(z_xlsx)
+                                        )
+                                    total_sent_zones += 1
+                                except Exception as e_fwd_doc:
+                                    log.warning("Failed forwarding speed doc to zone group %s: %s", gid, e_fwd_doc)
+                    except Exception as e_z_gen:
+                        log.warning("Failed building speed report for zone %s: %s", z_name, e_z_gen)
+
+            # B. Forward to 36 Branch Groups in forward_mapping (Unless skip_branch)
+            if not skip_branch:
+                fwd_map = get_forward_mapping(cfg)
+                for gid, handles in fwd_map.items():
+                    if not handles or "*" in handles:
+                        continue
+                    br_code = handles[0].upper()
+                    if br_code not in speed_report.MAIN_36_BRANCHES:
+                        continue
+
+                    # If specific branch handles were supplied in command, ONLY forward to those requested branches!
+                    if tgt_upper not in ("ALL", "TOTAL", "MEGA") and not tgt_upper.startswith("ZONE"):
+                        req_target_branches = [b.upper() for b in filtered_args]
+                        matched = False
+                        for r_tb in req_target_branches:
+                            if br_code == r_tb or (len(r_tb) <= 3 and br_code.startswith(r_tb)):
+                                matched = True
+                                break
+                        if not matched:
+                            continue
+
+                    br_xlsx = os.path.join(tmpdir, f"DELIVERY_SPEED_REPORT_{stamp}_{br_code}{suffix_file}.xlsx")
+                    try:
+                        b_del, b_u2, b_24, b_o8, b_pay = await asyncio.to_thread(
+                            speed_report.build_speed_report, src, br_xlsx, target_label=br_code, report_date=target_date, revenue_path=rev_file,
+                            preloaded_df=shared_df, preloaded_vas_map=shared_vas_map
+                        )
+                        b_caption = (
+                            f"⚡ *DELIVERY SPEED SLA REPORT ({br_code}{ytd_tag})*\n"
+                            f"Total Delivered (410): `{b_del}`\n"
+                            f"< 2 Hours (+50%): `{b_u2}`\n"
+                            f"2 - 4 Hours (+25%): `{b_24}`\n"
+                            f"> 8 Hours (-25%): `{b_o8}`\n"
+                            f"Total Commission: `${b_pay:.2f}`"
+                        )
+
+                        try:
+                            b_img = await asyncio.to_thread(speed_report.render_speed_summary_image, br_xlsx)
+                            b_img.name = f"SPEED_SUMMARY_{br_code}{suffix_file}.png"
+                            await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=b_img, caption=b_caption, parse_mode="Markdown")
+                        except Exception as e_b_img:
+                            log.warning("Failed sending speed photo to branch group %s: %s", br_code, e_b_img)
+
+                        try:
+                            with open(br_xlsx, "rb") as b_f_doc:
+                                await safe_api_call(
+                                    sender_bot.send_document,
+                                    chat_id=int(gid),
+                                    document=b_f_doc,
+                                    filename=os.path.basename(br_xlsx)
+                                )
+                            total_sent_branches += 1
+                        except Exception as e_b_doc:
+                            log.warning("Failed sending speed doc to branch group %s: %s", br_code, e_b_doc)
+                    except Exception as e_br_gen:
+                        log.warning("Failed building speed report for branch %s: %s", br_code, e_br_gen)
+
+        fwd_status_msg = ""
+        if total_sent_zones > 0 or total_sent_branches > 0:
+            fwd_status_msg = f" (Forwarded to {total_sent_zones} Zone groups & {total_sent_branches} Branch groups)"
+        elif no_fwd or (skip_branch and skip_zone):
+            fwd_status_msg = " [Private / No-Forward Mode]"
+
+        await edit_or_send_requester_text(msg, update, context, f"✅ Done! Sent EXECUTIVE DELIVERY SPEED DASHBOARD ({target_label.upper()}{ytd_tag}){fwd_status_msg}.")
+    except Exception as e:
+        log.exception("Error in /speed command: %s", e)
+        await edit_or_send_requester_text(msg, update, context, f"❌ Error generating speed report: {e}")
+
+
+@pm_required_handler
+async def cmd_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generates exact SHIPMENTS INCOMING REPORT (Báo cáo hàng đến) matching official template."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    target_label = " ".join(args) if args else "Zone 1"
+
+    msg = await send_requester_text(update, context, f"Generating SHIPMENTS INCOMING REPORT ({target_label})...")
+    tmpdir = _make_run_cache("tomorrow_run")
+    stamp = datetime.now().strftime("%d.%m_%HH%M")
+    src   = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+
+    try:
+        await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=True)
+        import importlib
+        import shipments_tomorrow
+        importlib.reload(shipments_tomorrow)
+        out_xlsx = os.path.join(tmpdir, f"SHIPMENTS_INCOMING_REPORT_{stamp}_{target_label.replace(' ', '_')}.xlsx")
+        bills, weight = await asyncio.to_thread(shipments_tomorrow.build_shipments_tomorrow_report, src, out_xlsx, target_label=target_label)
+
+        # Generate clean Executive Summary cropped image matching user template
+        try:
+            img_buf = await asyncio.to_thread(shipments_tomorrow.render_executive_summary_image, out_xlsx)
+            img_buf.name = f"EXECUTIVE_SUMMARY_{target_label.replace(' ', '_')}.png"
+            await send_requester_photo(update, context, img_buf)
+        except Exception as e_img:
+            log.warning("Could not render executive summary image: %s", e_img)
+
+        caption = f"🚚 *SHIPMENTS INCOMING REPORT ({target_label})*\n📦 Total Bills: `{bills}`\n⚖️ Total Weight: `{weight/1000:,.2f} kg`"
+        with open(out_xlsx, "rb") as f_doc:
+            await send_requester_document(update, context, f_doc, os.path.basename(out_xlsx), caption=caption)
+
+        # Forward to target Telegram group (both branch groups in forward_mapping and zone groups in zone_forward_mapping)
+        tgt_upper = target_label.upper().replace(" ", "")
+
+        if is_paused(cfg):
+            await edit_or_send_requester_text(msg, update, context, f"✅ Generated SHIPMENTS INCOMING REPORT ({target_label}). Forwarding to groups skipped (bot is paused).")
+            return
+
+        sender_bot = get_group_sender_bot(context)
+
+        if tgt_upper in ("BRANCH", "BRANCHES", "PROVINCE", "PROVINCES"):
+            fwd_map = get_forward_mapping(cfg)
+            total_sent_branches = 0
+            for gid, handles in fwd_map.items():
+                if not handles or "*" in handles:
+                    continue
+                br_code = handles[0].upper()
+                if br_code.startswith("PNP") or br_code.startswith("KAN"):
+                    continue
+                br_xlsx = os.path.join(tmpdir, f"SHIPMENTS_INCOMING_REPORT_{stamp}_{br_code}.xlsx")
+                try:
+                    b_bills, b_weight = await asyncio.to_thread(shipments_tomorrow.build_shipments_tomorrow_report, src, br_xlsx, target_label=br_code)
+                    if b_bills > 0:
+                        b_caption = f"🚚 *SHIPMENTS INCOMING REPORT ({br_code})*\n📦 Total Bills: `{b_bills}`\n⚖️ Total Weight: `{b_weight/1000:,.2f} kg`"
+                        try:
+                            b_img = await asyncio.to_thread(shipments_tomorrow.render_executive_summary_image, br_xlsx)
+                            b_img.name = f"EXECUTIVE_SUMMARY_{br_code}.png"
+                            await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=b_img)
+                        except Exception as e_bp:
+                            log.warning("Failed sending branch photo to group %s: %s", gid, e_bp)
+
+                        with open(br_xlsx, "rb") as f_doc:
+                            await safe_api_call(
+                                sender_bot.send_document,
+                                chat_id=int(gid),
+                                document=f_doc,
+                                filename=os.path.basename(br_xlsx),
+                                caption=b_caption
+                            )
+                            total_sent_branches += 1
+                except Exception as e_br:
+                    log.warning("Failed building/forwarding tomorrow report for branch %s: %s", br_code, e_br)
+
+            await edit_or_send_requester_text(msg, update, context, f"✅ Done! Forwarded SHIPMENTS INCOMING REPORTS to {total_sent_branches} Provincial Branch Groups (excluding PNP/KAN).")
+            return
+
+        if tgt_upper in ("ALL", "MEGA"):
+            fwd_map = get_forward_mapping(cfg)
+            total_sent_branches = 0
+            for gid, handles in fwd_map.items():
+                if not handles or "*" in handles:
+                    continue
+                br_code = handles[0].upper()
+                if br_code.startswith("PNP") or br_code.startswith("KAN"):
+                    continue
+                br_xlsx = os.path.join(tmpdir, f"SHIPMENTS_INCOMING_REPORT_{stamp}_{br_code}.xlsx")
+                try:
+                    b_bills, b_weight = await asyncio.to_thread(shipments_tomorrow.build_shipments_tomorrow_report, src, br_xlsx, target_label=br_code)
+                    if b_bills > 0:
+                        b_caption = f"🚚 *SHIPMENTS INCOMING REPORT ({br_code})*\n📦 Total Bills: `{b_bills}`\n⚖️ Total Weight: `{b_weight/1000:,.2f} kg`"
+                        b_img_buf = None
+                        try:
+                            b_img_buf = await asyncio.to_thread(shipments_tomorrow.render_executive_summary_image, br_xlsx)
+                            b_img_buf.name = f"EXECUTIVE_SUMMARY_{br_code}.png"
+                            # Send to requester too
+                            await send_requester_photo(update, context, b_img_buf)
+                        except Exception as e_bp:
+                            log.warning("Failed rendering branch photo for %s: %s", br_code, e_bp)
+
+                        # Send to requester
+                        with open(br_xlsx, "rb") as f_req:
+                            await send_requester_document(update, context, f_req, os.path.basename(br_xlsx), caption=b_caption)
+
+                        # Forward to group
+                        try:
+                            if b_img_buf:
+                                b_img_buf.seek(0)
+                                await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=b_img_buf)
+                        except Exception as e_bp2:
+                            log.warning("Failed sending branch photo to group %s: %s", gid, e_bp2)
+
+                        with open(br_xlsx, "rb") as f_doc:
+                            await safe_api_call(
+                                sender_bot.send_document,
+                                chat_id=int(gid),
+                                document=f_doc,
+                                filename=os.path.basename(br_xlsx),
+                                caption=b_caption
+                            )
+                            total_sent_branches += 1
+                except Exception as e_br:
+                    log.warning("Failed building/forwarding tomorrow report for branch %s: %s", br_code, e_br)
+
+            await edit_or_send_requester_text(msg, update, context, f"Done! Sent SHIPMENTS INCOMING REPORTS for {total_sent_branches} Provincial Branches.")
+            return
+
+        # Single target forwarding (Zone or Branch)
+        zone_fwd_map = cfg.get("zone_forward_mapping", {})
+        fwd_map = get_forward_mapping(cfg)
+        if tgt_upper.startswith("ZONE"):
+            zone_key_clean = "zone" + tgt_upper.replace("ZONE", "").strip()
+            for gid, zkey in zone_fwd_map.items():
+                if zkey.lower() == zone_key_clean.lower():
+                    try:
+                        try:
+                            img_buf = await asyncio.to_thread(shipments_tomorrow.render_executive_summary_image, out_xlsx)
+                            img_buf.name = f"EXECUTIVE_SUMMARY_{target_label.replace(' ', '_')}.png"
+                            await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=img_buf)
+                        except Exception as e_sing_img:
+                            log.warning("Failed sending single zone photo: %s", e_sing_img)
+
+                        with open(out_xlsx, "rb") as f_doc:
+                            await safe_api_call(
+                                sender_bot.send_document,
+                                chat_id=int(gid),
+                                document=f_doc,
+                                filename=os.path.basename(out_xlsx),
+                                caption=caption
+                            )
+                    except Exception as e_fwd:
+                        log.warning("Failed forwarding /tomorrow to single zone group %s: %s", gid, e_fwd)
+        else:
+            for gid, handles in fwd_map.items():
+                if not handles or "*" in handles:
+                    continue
+                if any(h.upper() == tgt_upper for h in handles):
+                    try:
+                        try:
+                            img_buf = await asyncio.to_thread(shipments_tomorrow.render_executive_summary_image, out_xlsx)
+                            img_buf.name = f"EXECUTIVE_SUMMARY_{target_label.replace(' ', '_')}.png"
+                            await safe_api_call(sender_bot.send_photo, chat_id=int(gid), photo=img_buf)
+                        except Exception as e_sing_img:
+                            log.warning("Failed sending single branch photo: %s", e_sing_img)
+
+                        with open(out_xlsx, "rb") as f_doc:
+                            await safe_api_call(
+                                sender_bot.send_document,
+                                chat_id=int(gid),
+                                document=f_doc,
+                                filename=os.path.basename(out_xlsx),
+                                caption=caption
+                            )
+                    except Exception as e_fwd:
+                        log.warning("Failed forwarding /tomorrow to single branch group %s: %s", gid, e_fwd)
+
+        await edit_or_send_requester_text(msg, update, context, f"✅ Done generating SHIPMENTS INCOMING REPORT ({target_label}).")
+    except Exception as e:
+        log.exception("Error in /tomorrow command: %s", e)
+        await edit_or_send_requester_text(msg, update, context, f"❌ Error generating tomorrow report: {e}")
+
 
 def get_highlighted_order_ids(df_t, today_date):
     """Return a set of order IDs that are highlighted in this DataFrame."""
@@ -1704,7 +3227,8 @@ async def run_time_vs(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
 
     try:
         with open(REPORTS_LOG_PATH, encoding="utf-8") as f:
-            log_data = json.load(f)
+            content = f.read().strip()
+            log_data = json.loads(content) if content else {}
     except Exception as e:
         await private_or_current_reply(update, context, f"Error reading reports log: {e}")
         return
@@ -1790,10 +3314,12 @@ async def run_time_vs(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
 
     try:
         tmpdir = tempfile.mkdtemp(prefix="vs_")
-        res_1 = generate_report.generate_reports_from_data(
+        res_1 = await asyncio.to_thread(
+            generate_report.generate_reports_from_data,
             file_start[1], REF_PATH, tmpdir, return_metadata=True, mode="wide"
         )
-        res_2 = generate_report.generate_reports_from_data(
+        res_2 = await asyncio.to_thread(
+            generate_report.generate_reports_from_data,
             file_end[1], REF_PATH, tmpdir, return_metadata=True, mode="wide"
         )
         # Clean up
@@ -2009,56 +3535,182 @@ async def fetch_lat_long(code: str, token: str, sem: asyncio.Semaphore):
         return code, None, None
 
 
+PROVINCE_TO_MAIN_BRANCH = {
+    "BAN": "BANP001", "BAT": "BATP001", "CHA": "CHAP001", "CHH": "CHHP001",
+    "KAM": "KAMP001", "KAN": "KANP001", "KOH": "KOHP001", "KRA": "KRAP001",
+    "MON": "MONP001", "ODD": "ODDP001", "PNP": "PNPP001", "PRE": "PREP001",
+    "PRH": "PRHP001", "PUR": "PURP001", "ROT": "ROTP001", "SIE": "SIEP001",
+    "SIH": "SIHP001", "SPE": "SPEP001", "STU": "STUP001", "SVA": "SVAP001",
+    "TAK": "TAKP001", "TBK": "TBKP001", "THO": "THOP001", "KEP": "KAMP001",
+    "PAI": "BATP001"
+}
+
+_location_phones_cache = None
+
+def _get_fallback_location_phone(code: str, branch_code: str = "") -> str:
+    global _location_phones_cache
+    if _location_phones_cache is None:
+        _location_phones_cache = {}
+        here = os.path.dirname(os.path.abspath(__file__))
+        
+        # 1. Load from manager_contacts.json (main branch hubs)
+        mc_path = os.path.join(here, "manager_contacts.json")
+        if os.path.exists(mc_path):
+            try:
+                with open(mc_path, "r", encoding="utf-8") as f:
+                    mc = json.load(f)
+                    for k, v in mc.items():
+                        if isinstance(v, dict) and v.get("phone"):
+                            _location_phones_cache[k.upper()] = _clean_export_phone(v["phone"])
+            except Exception:
+                pass
+                
+        # 2. Load from post_office_lookup.csv
+        po_path = os.path.join(here, "post_office_lookup.csv")
+        if os.path.exists(po_path):
+            try:
+                import pandas as pd
+                df_po = pd.read_csv(po_path, dtype=str)
+                for _, r in df_po.iterrows():
+                    po = str(r.get("current_post_office", "")).strip().upper()
+                    ph = _clean_export_phone(r.get("phone", ""))
+                    if po and ph:
+                        _location_phones_cache[po] = ph
+            except Exception:
+                pass
+                
+        # 3. Load from pickup_branch_lookup.csv (Search Text / Phone)
+        pk_path = os.path.join(here, "pickup_branch_lookup.csv")
+        if os.path.exists(pk_path):
+            try:
+                import pandas as pd
+                df_pk = pd.read_csv(pk_path, dtype=str)
+                for _, r in df_pk.iterrows():
+                    c = str(r.get("Pickup Branch", "") or r.get("Post code", "")).strip().upper()
+                    st = str(r.get("Search Text", "")).strip()
+                    if c and st and (c not in _location_phones_cache or not _location_phones_cache[c]):
+                        parts = [p.strip() for p in st.split("|")]
+                        for p in parts:
+                            if re.match(r"^(0\d{7,10}|\d{8,10})$", p):
+                                _location_phones_cache[c] = _clean_export_phone(p)
+                                break
+            except Exception:
+                pass
+
+    code_u = str(code or "").strip().upper()
+    if code_u in _location_phones_cache and _location_phones_cache[code_u]:
+        return _location_phones_cache[code_u]
+    b_u = str(branch_code or "").strip().upper()
+    if b_u in _location_phones_cache and _location_phones_cache[b_u]:
+        return _location_phones_cache[b_u]
+    return ""
+
+
+def _classify_facility(code: str, type_label: str = "") -> str:
+    code = str(code or "").strip().upper()
+    type_label = str(type_label or "").strip()
+    
+    m = re.search(r"^[A-Z]{3}([PSA])\d+$", code)
+    if m:
+        letter = m.group(1)
+        if letter == "P": return "Post Office"
+        if letter == "S": return "Showroom"
+        if letter == "A": return "Agent"
+
+    if re.search(r"[A-Z]{3}P\d+", code): return "Post Office"
+    if re.search(r"[A-Z]{3}S\d+", code): return "Showroom"
+    if re.search(r"[A-Z]{3}A\d+", code): return "Agent"
+
+    if "Warehouse" in type_label or "Hub" in type_label or "Operations" in type_label:
+        return "Warehouse / Hub"
+
+    if "Authorized" in type_label or "Agent" in type_label or "Dealer" in type_label:
+        return "Agent"
+
+    if "Post office" in type_label or "Post Office" in type_label:
+        return "Post Office"
+
+    return "Post Office"
+
+
 def _post_office_export_row(item, fallback_branch=""):
     branch = item.get("branch") if isinstance(item.get("branch"), dict) else {}
-    code = str(item.get("code", "")).strip().upper()
+    code = str(item.get("code") or item.get("Pickup Branch") or item.get("Post code") or "").strip().upper()
     branch_code = str(
         item.get("parentDepartmentCode")
         or branch.get("code")
         or fallback_branch
-        or ""
+        or (code[:3] if len(code) >= 3 else "")
     ).strip().upper()
 
-    commune_en = _strip_department_code(
-        item.get("enUsName") or item.get("name") or item.get("viVnName"),
-        code,
-    )
+    raw_name = item.get("name") or item.get("enUsName") or item.get("kmKhmName") or item.get("viVnName") or ""
+    po_name = _strip_department_code(raw_name, code).strip()
+
+    commune_en = po_name
     commune_khmer = _strip_department_code(
-        item.get("kmKhmName") or item.get("enUsName") or item.get("name"),
+        item.get("Commune Khmer") or item.get("kmKhmName") or po_name,
         code,
     )
+    province_en = BRANCH_TO_PROVINCE_EN.get(branch_code) or branch.get("name") or branch.get("enUsName") or branch_code
+    
+    prov_kh, dist_en, dist_kh, comm_kh = _map_to_administrative_division(branch_code, commune_en, commune_khmer)
+    
+    phone = _clean_export_phone(item.get("Phone Number") or item.get("Phone") or item.get("phone") or item.get("phone_detail") or item.get("hpoUsername")) or _get_fallback_location_phone(code, branch_code)
+
+    level = str(item.get("Post Office Level") or item.get("type") or item.get("Category") or item.get("typeLabel") or "AGENT").strip()
+    status = str(item.get("Status") or item.get("status") or item.get("statusLabel") or "ACTIVE").strip()
+
+    address = f"{commune_en}, {dist_en}, {province_en}, Cambodia"
+
     branch_en = _strip_department_code(
-        branch.get("enUsName") or branch.get("name") or item.get("branch_name"),
+        item.get("Branch EN") or branch.get("enUsName") or branch.get("name") or item.get("branch_name"),
         branch_code,
     )
     branch_khmer = _strip_department_code(
-        branch.get("kmKhmName") or branch.get("enUsName") or branch.get("name"),
+        item.get("Branch Khmer") or branch.get("kmKhmName") or branch.get("enUsName") or branch.get("name"),
         branch_code,
     )
-    phone = _clean_export_phone(item.get("phone"))
+
+    from speed_report import MAIN_36_BRANCHES as _36
+    main_b = PROVINCE_TO_MAIN_BRANCH.get(branch_code) or PROVINCE_TO_MAIN_BRANCH.get(code[:3]) or (code if code in _36 else "PNPP001")
+    main_branch_phone = _clean_export_phone(item.get("Main Branch Phone") or item.get("main_branch_phone")) or _get_fallback_location_phone(main_b)
 
     search_parts = [
         code,
-        commune_en,
-        commune_khmer,
+        po_name,
         phone,
         branch_code,
-        branch_en,
-        branch_khmer,
+        province_en,
+        dist_en,
+        level,
     ]
 
     return {
+        "Post Code": code,
+        "Post Office Name": po_name,
+        "Post Office Level": level,
+        "Phone": phone,
+        "Province": province_en,
+        "District": dist_en,
+        "Commune": commune_en,
+        "Address": address,
+        "Status": status,
+        "Branch": branch_code,
+
+        # Backward compatibility fields
         "Pickup Branch": code,
         "Commune EN": commune_en,
         "Commune Khmer": commune_khmer,
-        "Phone": phone,
+        "Phone Number": phone,
+        "Main Branch Phone": main_branch_phone,
         "Branch Code": branch_code,
         "Branch EN": branch_en,
         "Branch Khmer": branch_khmer,
-        "Type": str(item.get("typeLabel") or item.get("type") or "").strip(),
-        "Status": str(item.get("statusLabel") or item.get("status") or "").strip(),
-        "Latitude": item.get("latitude"),
-        "Longitude": item.get("longitude"),
+        "Category": level,
+        "Post office level": level,
+        "Type": level,
+        "Latitude": item.get("Latitude") or item.get("latitude"),
+        "Longitude": item.get("Longitude") or item.get("longitude"),
         "Search Text": " | ".join(part for part in search_parts if part),
     }
 
@@ -2149,6 +3801,8 @@ DISTRICT_FALLBACK_KH = {
     "ROT": "បានលុង",
     "MON": "សែនមនោរម្យ",
     "STU": "ស្ទឹងត្រែង",
+    "KEP": "កែប",
+    "PAI": "ប៉ៃលិន",
 }
 
 DISTRICT_FALLBACK_EN = {
@@ -2175,6 +3829,8 @@ DISTRICT_FALLBACK_EN = {
     "ROT": "Banlung",
     "MON": "Senmonorom",
     "STU": "Stung Treng",
+    "KEP": "Kep",
+    "PAI": "Pailin",
 }
 
 _gazetteer_data = None
@@ -2221,9 +3877,8 @@ def _map_to_administrative_division(branch_code, commune_en_raw, commune_kh_raw)
 def _write_post_office_export_excel(df, out_path, sheet_label, title):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
 
-    DARK_BLUE = "172033"
+    DARK_BLUE = "1B4F72"
     WHITE = "FFFFFF"
     BORDER_CLR = "CCCCCC"
     
@@ -2236,10 +3891,21 @@ def _write_post_office_export_excel(df, out_path, sheet_label, title):
     
     wb = Workbook()
     ws = wb.active
-    ws.title = "Stores"
+    ws.title = "Post Offices"
     ws.views.sheetView[0].showGridLines = True
     
-    data_headers = ["Province *", "District *", "District KH", "Delivery Store *", "Latitude", "Longitude"]
+    data_headers = [
+        "Post Code",
+        "Post Office Name",
+        "Post Office Level",
+        "Phone",
+        "Province",
+        "District",
+        "Commune",
+        "Address",
+        "Status",
+        "Branch"
+    ]
     
     for col_idx, col_name in enumerate(data_headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=col_name)
@@ -2249,41 +3915,40 @@ def _write_post_office_export_excel(df, out_path, sheet_label, title):
         cell.border = thin_border
     ws.row_dimensions[1].height = 28
     
+    col_widths = {
+        "A": 16,
+        "B": 26,
+        "C": 20,
+        "D": 16,
+        "E": 22,
+        "F": 22,
+        "G": 22,
+        "H": 65,
+        "I": 14,
+        "J": 12,
+    }
+    for col_letter, width in col_widths.items():
+        ws.column_dimensions[col_letter].width = width
+
     for idx, row in df.iterrows():
-        branch_code = str(row.get("Branch Code", "")).strip().upper()
-        commune_en = str(row.get("Commune EN", ""))
-        commune_kh = str(row.get("Commune Khmer", ""))
-        code = str(row.get("Pickup Branch", ""))
-        lat = row.get("Latitude")
-        lon = row.get("Longitude")
-        
-        prov_kh, dist_en, dist_kh, comm_kh = _map_to_administrative_division(branch_code, commune_en, commune_kh)
-        store_name = f"{code} - {commune_en}"
-        
         row_idx = idx + 2
-        
-        ws.cell(row=row_idx, column=1, value=prov_kh).font = Font(name="Calibri", size=10)
-        ws.cell(row=row_idx, column=2, value=dist_en).font = Font(name="Calibri", size=10)
-        ws.cell(row=row_idx, column=3, value=dist_kh).font = Font(name="Calibri", size=10)
-        ws.cell(row=row_idx, column=4, value=store_name).font = Font(name="Calibri", size=10)
-        ws.cell(row=row_idx, column=5, value=lat).font = Font(name="Calibri", size=10)
-        ws.cell(row=row_idx, column=6, value=lon).font = Font(name="Calibri", size=10)
-        
-        for col_idx in range(1, 7):
-            ws.cell(row=row_idx, column=col_idx).border = thin_border
-            
-    ws.column_dimensions["A"].width = 25
-    ws.column_dimensions["B"].width = 25
-    ws.column_dimensions["C"].width = 25
-    ws.column_dimensions["D"].width = 45
-    ws.column_dimensions["E"].width = 15
-    ws.column_dimensions["F"].width = 15
-    
+        for col_idx, col_name in enumerate(data_headers, 1):
+            val = row.get(col_name, "")
+            cell = ws.cell(row=row_idx, column=col_idx, value="" if pd.isna(val) else str(val))
+            cell.font = Font(name="Calibri", size=10)
+            cell.border = thin_border
+            if col_name in ("Post Code", "Post Office Level", "Status", "Branch"):
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            elif col_name == "Phone":
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+                cell.number_format = "@"
+            else:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:F{len(df)+1}"
+    ws.auto_filter.ref = f"A1:J{len(df)+1}"
     
     wb.save(out_path)
-
 
 
 async def send_pickup_branch_export(update, context, cfg, raw_args):
@@ -2302,36 +3967,35 @@ async def send_pickup_branch_export(update, context, cfg, raw_args):
     try:
         import pandas as pd
 
-        post_offices = []
         branch_errors = []
-        
-        # Concurrency limit of 4 to avoid hitting server limits/500 errors
-        sem = asyncio.Semaphore(4)
-        
-        async def sem_download(code):
-            async with sem:
-                # Stagger the requests slightly to prevent a burst of 4 requests at the exact same millisecond
-                await asyncio.sleep(0.3)
-                return await asyncio.to_thread(
-                    downloader.download_post_offices,
-                    cfg["api"],
-                    code,
-                )
-        
-        # Launch parallel downloads with semaphore limit
-        tasks = [sem_download(bc) for bc in branch_codes]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for branch_code, res in zip(branch_codes, results):
-            if isinstance(res, Exception):
-                branch_errors.append(f"{branch_code}: {res}")
-                log.warning("Export failed for branch %s: %s", branch_code, res)
-            else:
-                for item in res:
-                    if isinstance(item, dict):
-                        item = dict(item)
-                        item["_export_branch_query"] = branch_code
-                    post_offices.append(item)
+        if all_mode and not branch_args:
+            post_offices = await asyncio.to_thread(downloader.download_all_post_offices, cfg["api"])
+        else:
+            post_offices = []
+            sem = asyncio.Semaphore(4)
+            
+            async def sem_download(code):
+                async with sem:
+                    await asyncio.sleep(0.3)
+                    return await asyncio.to_thread(
+                        downloader.download_post_offices,
+                        cfg["api"],
+                        code,
+                    )
+            
+            tasks = [sem_download(bc) for bc in branch_codes]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for branch_code, res in zip(branch_codes, results):
+                if isinstance(res, Exception):
+                    branch_errors.append(f"{branch_code}: {res}")
+                    log.warning("Export failed for branch %s: %s", branch_code, res)
+                else:
+                    for item in res:
+                        if isinstance(item, dict):
+                            item = dict(item)
+                            item["_export_branch_query"] = branch_code
+                        post_offices.append(item)
 
         if not post_offices:
             extra = "\n".join(branch_errors[:5])
@@ -2380,10 +4044,14 @@ async def send_pickup_branch_export(update, context, cfg, raw_args):
             if isinstance(item, dict)
         ]
         df = pd.DataFrame(rows)
-        if "Pickup Branch" in df.columns:
+        if "Post Code" in df.columns:
+            df = df[df["Post Code"].astype(str).str.strip() != ""].copy()
+            df = df.drop_duplicates(subset=["Post Code"], keep="first")
+        elif "Pickup Branch" in df.columns:
             df = df[df["Pickup Branch"].astype(str).str.strip() != ""].copy()
             df = df.drop_duplicates(subset=["Pickup Branch"], keep="first")
-        sort_cols = [c for c in ("Branch Code", "Pickup Branch") if c in df.columns]
+
+        sort_cols = [c for c in ("Branch", "Post Code", "Branch Code", "Pickup Branch") if c in df.columns]
         if sort_cols:
             df = df.sort_values(sort_cols).reset_index(drop=True)
 
@@ -2434,6 +4102,43 @@ async def send_pickup_branch_export(update, context, cfg, raw_args):
     except Exception as e:
         log.exception("Error in pickup branch export")
         await edit_or_send_requester_text(msg, update, context, f"Export failed: {e}")
+
+
+@pm_required_handler
+async def cmd_trackinglog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/trackinglog - Generates the Tracking Status Logs Report for the current month."""
+    await delete_group_command(update, context)
+    
+    msg = await private_or_current_reply(
+        update, context, "⏳ Starting Tracking Log Generation (month-to-date).\nThis will take ~1-3 minutes..."
+    )
+    
+    def update_progress(text):
+        log.info(f"TrackingLog: {text}")
+        
+    try:
+        from generate_tracking_log import generate_tracking_log_report
+        import asyncio
+        
+        # Run in thread
+        out_path = await asyncio.to_thread(generate_tracking_log_report, update_progress)
+        
+        await context.bot.send_document(
+            chat_id=msg.chat_id,
+            document=open(out_path, 'rb'),
+            caption="✅ Tracking Status Logs Generated Successfully!"
+        )
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+            
+    except Exception as e:
+        log.exception("Error in /trackinglog")
+        await context.bot.send_message(
+            chat_id=msg.chat_id,
+            text=f"❌ Error generating tracking logs: {e}"
+        )
 
 
 @pm_required_handler
@@ -2650,7 +4355,7 @@ async def cmd_find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     cfg = load_config()
-    tmpdir = tempfile.mkdtemp(prefix="find_")
+    tmpdir = _make_run_cache("find_run")
     stamp = datetime.now().strftime("%d.%m_%HH%M")
     src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
 
@@ -3955,8 +5660,7 @@ async def run_push(
         )
         return
 
-    tmpdir = tempfile.mkdtemp(prefix="push_")
-    track_report_dir(tmpdir)
+    tmpdir = _make_run_cache("push_run")
     stamp  = datetime.now().strftime("%d.%m_%HH%M")
     src    = os.path.join(tmpdir, f"export_{stamp}.xlsx")
 
@@ -4025,6 +5729,37 @@ async def run_push(
                         all_branches.append(b.strip())
             zone_override_branch = ",".join(all_branches)
             zone_mode = "ZONE"
+            # The zone delivery never needs reports for unmapped offices.
+            target_handles = sorted({
+                str(handle).strip().upper()
+                for handles in total_zones.values() for handle in handles
+                if str(handle).strip()
+            })
+
+        elif zone_key_arg in ("branch", "branches", "province", "provinces"):
+            # "push branch" = all province branches only (excludes PNPP001 to PNPP014)
+            branch_handles = []
+            for zk in ["zone2", "zone3", "zone4", "zone5"]:
+                for h in total_zones.get(zk, []):
+                    if h.upper() not in branch_handles:
+                        branch_handles.append(h.upper())
+            # Also add non-PNPP handles from zone1 (KANP001, PREP001, SVAP001)
+            for h in total_zones.get("zone1", []):
+                if not h.upper().startswith("PNPP") and h.upper() not in branch_handles:
+                    branch_handles.append(h.upper())
+            target_handles = branch_handles
+            zone_mode = "BRANCHES"
+            # fetch only province branch codes
+            prov_branches = []
+            for zk in ["zone2", "zone3", "zone4", "zone5"]:
+                zb = zone_branches_map.get(zk, "")
+                for b in zb.split(","):
+                    if b.strip() and b.strip() not in prov_branches:
+                        prov_branches.append(b.strip())
+            for b in ["KAN", "PRE", "SVA"]:
+                if b not in prov_branches:
+                    prov_branches.append(b)
+            zone_override_branch = ",".join(prov_branches)
 
         elif zone_key_arg and zone_key_arg in total_zones:
             # "push zone5" = specific zone only
@@ -4038,9 +5773,25 @@ async def run_push(
             # exclude any leftover remark tokens (already stripped above)
             target_handles = [arg.upper() for arg in raw_args if arg]
 
-        downloader.download_detail(cfg["api"], src, branch_code=zone_override_branch, force_refresh=force_refresh)
+        # ── Download detail + revenue IN PARALLEL for maximum speed ──────────
+        rev_cache = os.path.join(tmpdir, "latest_revenue.xlsx")
+        async def _dl_detail():
+            await asyncio.to_thread(
+                downloader.download_detail, cfg["api"], src,
+                branch_code=zone_override_branch, force_refresh=force_refresh
+            )
+        async def _dl_revenue():
+            try:
+                await asyncio.to_thread(
+                    downloader.download_revenue_detail, cfg["api"], rev_cache,
+                    force_refresh=force_refresh
+                )
+            except Exception as e_rev:
+                log.warning("Could not refresh revenue detail for /push: %s", e_rev)
+        await asyncio.gather(_dl_detail(), _dl_revenue())
+
         msg = await edit_or_send_requester_text(
-            msg, update, context, "Download done. Generating reports..."
+            msg, update, context, "⏳ Download done. Generating reports..."
         )
 
         if not os.path.exists(REF_PATH):
@@ -4056,8 +5807,18 @@ async def run_push(
                 target_handles = group_handles
 
         mode = get_mode(cfg)
-        result = generate_report.generate_reports_from_data(
-            src, REF_PATH, tmpdir, return_metadata=True, mode=mode, target_handles=target_handles
+
+        zone_only_push = zone_mode == "ZONE" or (
+            zone_mode and zone_mode.startswith("ZONE") and zone_mode != "ALL"
+        )
+        result = await asyncio.to_thread(
+            generate_report.generate_reports_from_data,
+            src, REF_PATH, tmpdir, return_metadata=True, mode=mode, target_handles=target_handles,
+            revenue_path=rev_cache if os.path.exists(rev_cache) else None,
+            # Zone forwarding builds five consolidated files below.  Avoid
+            # creating the per-handle/per-tab files that only normal Push sends.
+            render_handle_files=not zone_only_push,
+            render_final_excel=not zone_only_push,
         )
         update_webapp_cache(result)
         save_highlight_history(result)
@@ -4071,7 +5832,7 @@ async def run_push(
 
         # Recalculate overall counts after filtering
         if target_handles or zone_mode:
-            overall = {"Pickup": 0, "Delivery": 0, "Pending": 0}
+            overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
             for hr in result["handle_results"]:
                 for k in overall:
                     overall[k] += hr["handle_counts"].get(k, 0)
@@ -4080,7 +5841,7 @@ async def run_push(
             label = f"{zone_mode} " if zone_mode else ""
             result["summary_caption"] = "\n".join([
                 f"📋 {label}Daily Report  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-                f"Pickup: {overall['Pickup']}  |  Delivery: {overall['Delivery']}  |  Pending: {overall['Pending']}",
+                f"Pickup: {overall['Pickup']}  |  Delivery: {overall['Delivery']}  |  Transit: {overall['Transit']}  |  Branch: {overall['Branch']}",
                 f"Grand Total: {grand_total}",
             ])
 
@@ -4105,7 +5866,7 @@ async def run_push(
         actual_forward_groups = []
 
         for group_id_str in forward_groups:
-            allowed = forward_mapping.get(str(group_id_str), ["*"])
+            allowed = forward_mapping.get(str(group_id_str), [])
             wants_all = "*" in allowed
             will_receive = False
             for hr in result["handle_results"]:
@@ -4119,7 +5880,7 @@ async def run_push(
         
         if not test_mode and forward_groups:
             for group_id_str in forward_groups:
-                allowed = forward_mapping.get(str(group_id_str), ["*"])
+                allowed = forward_mapping.get(str(group_id_str), [])
                 if "*" in allowed:
                     covered_handles.add("*")
                 else:
@@ -4145,13 +5906,14 @@ async def run_push(
                     log.warning(f"Image render failed {hr['handle']}: {e}")
             await send_requester_text(update, context, hr["remark"])
 
-        with open(result["final_xlsx"], "rb") as f:
-            await send_requester_document(
-                update,
-                context,
-                f,
-                os.path.basename(result["final_xlsx"]),
-            )
+        if result.get("final_xlsx"):
+            with open(result["final_xlsx"], "rb") as f:
+                await send_requester_document(
+                    update,
+                    context,
+                    f,
+                    os.path.basename(result["final_xlsx"]),
+                )
         await send_requester_text(update, context, result["summary_caption"])
 
         # ── Forward to groups only outside test mode ──────────────────────────
@@ -4172,7 +5934,7 @@ async def run_push(
 
         # ── Zone group forwarding (push zone / push all) ────────────────────
         zone_fwd_map = cfg.get("zone_forward_mapping", {})
-        send_to_regular = zone_mode is None or zone_mode == "ALL"
+        send_to_regular = zone_mode is None or zone_mode in ("ALL", "BRANCHES")
         send_to_zones = zone_mode in ("ZONE", "ALL") or (
             zone_mode and zone_mode.startswith("ZONE") and zone_mode != "ALL"
         )
@@ -4224,8 +5986,8 @@ async def run_push(
                 except ValueError:
                     group_id = group_id_str
 
-                # Calculate zone totals
-                zone_overall = {"Pickup": 0, "Delivery": 0, "Pending": 0}
+                # Calculate zone totals across all tabs
+                zone_overall = {"Pickup": 0, "Delivery": 0, "Transit": 0, "Branch": 0}
                 for hr in zone_results:
                     for k in zone_overall:
                         zone_overall[k] += hr["handle_counts"].get(k, 0)
@@ -4234,7 +5996,7 @@ async def run_push(
                 zone_label = zone_key.upper()
                 zone_caption = "\n".join([
                     f"📋 {zone_label} Report  {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-                    f"Pickup: {zone_overall['Pickup']}  |  Delivery: {zone_overall['Delivery']}  |  Pending: {zone_overall['Pending']}",
+                    f"Pickup: {zone_overall['Pickup']}  |  Delivery: {zone_overall['Delivery']}  |  Transit: {zone_overall['Transit']}  |  Branch: {zone_overall['Branch']}",
                     f"Grand Total: {zone_grand}",
                 ])
                 if inline_remark:
@@ -4244,10 +6006,10 @@ async def run_push(
                 zone_result = {**result, "handle_results": zone_results, "overall_counts": zone_overall}
                 # Filter type_data DataFrames
                 zone_result["type_data"] = {}
-                for rn in ["Pickup", "Delivery", "Pending"]:
+                for rn in ["Pickup", "Delivery", "Transit", "Branch"]:
                     df = result.get("type_data", {}).get(rn)
                     if df is not None and not df.empty:
-                        filter_col = "POST OFFICE HANDLE"
+                        filter_col = generate_report.REPORT_FILTER_COLS.get(rn, "POST OFFICE HANDLE")
                         if filter_col in df.columns:
                             zone_result["type_data"][rn] = df[df[filter_col].isin(zone_handles)].copy()
                         else:
@@ -4256,58 +6018,45 @@ async def run_push(
                         zone_result["type_data"][rn] = pd.DataFrame()
 
                 try:
-                    # ── Build day_date_counts and urgent_counts for zone image ──
-                    zone_day_date_counts = {}
-                    zone_urgent_counts   = {}
-                    today_date = datetime.now().date()
-
-                    for rn in ["Pickup", "Delivery", "Pending"]:
-                        df_z = zone_result["type_data"].get(rn)
-                        if df_z is None or df_z.empty:
-                            continue
-                        date_col_z = result.get("date_col") or (
-                            "CREATED DATE" if "CREATED DATE" in df_z.columns else
-                            "CURRENT TIME"  if "CURRENT TIME"  in df_z.columns else None
-                        )
-                        if date_col_z and date_col_z in df_z.columns:
-                            parsed_z = pd.to_datetime(df_z[date_col_z], dayfirst=True,
-                                                      format="mixed", errors="coerce")
-                            df_z = df_z.copy()
-                            df_z["_zdate"] = parsed_z.dt.date
-
-                        handle_col = "POST OFFICE HANDLE"
-                        if handle_col not in df_z.columns:
-                            continue
-
-                        for _, row_z in df_z.iterrows():
-                            h = str(row_z.get(handle_col, "")).strip().upper()
-                            if not h:
-                                continue
-                            # date counts
-                            d_val = row_z.get("_zdate") if "_zdate" in df_z.columns else None
-                            if d_val and not pd.isna(d_val):
-                                zone_day_date_counts.setdefault(h, {})
-                                zone_day_date_counts[h][d_val] = zone_day_date_counts[h].get(d_val, 0) + 1
-                            # urgent = overdue (created > 1 day ago)
-                            created_d = None
-                            if "CREATED DATE" in df_z.columns:
-                                cd = pd.to_datetime(row_z.get("CREATED DATE"), dayfirst=True,
-                                                    format="mixed", errors="coerce")
-                                if not pd.isna(cd):
-                                    created_d = cd.date()
-                            if created_d and (today_date - created_d).days > 1:
-                                zone_urgent_counts[h] = zone_urgent_counts.get(h, 0) + 1
+                    # Reuse the report generator's per-handle metrics.  These are
+                    # calculated from _scan_date (the latest status/action), which
+                    # is the same date logic used by a normal push.
+                    zone_day_date_counts = {
+                        handle: result.get("day_date_counts", {}).get(handle, {})
+                        for handle in zone_handles
+                    }
+                    zone_urgent_counts = {
+                        handle: result.get("urgent_counts", {}).get(handle, {"1day": 0, "3days": 0})
+                        for handle in zone_handles
+                    }
+                    zone_fee_counts = {
+                        handle: result.get("fee_counts", {}).get(handle, 0.0)
+                        for handle in zone_handles
+                    }
+                    zone_cod_counts = {
+                        handle: result.get("cod_counts", {}).get(handle, 0.0)
+                        for handle in zone_handles
+                    }
+                    zone_vip_counts = {
+                        handle: result.get("vip_counts", {}).get(handle, 0)
+                        for handle in zone_handles
+                    }
+                    zone_result["report_label"] = zone_label
 
                     # 1. Summary image
+                    sender_bot = get_group_sender_bot(context)
                     img_buf = generate_summary.build_summary_image(
                         zone_results,
                         zone_overall,
                         zone_label=zone_label,
                         day_date_counts=zone_day_date_counts if zone_day_date_counts else None,
                         urgent_counts=zone_urgent_counts if zone_urgent_counts else None,
+                        fee_counts=zone_fee_counts if zone_fee_counts else None,
+                        cod_counts=zone_cod_counts if zone_cod_counts else None,
+                        vip_counts=zone_vip_counts if any(zone_vip_counts.values()) else None,
                     )
                     img_buf.name = f"{zone_key}_summary.png"
-                    await safe_api_call(context.bot.send_photo, chat_id=group_id, photo=img_buf)
+                    await safe_api_call(sender_bot.send_photo, chat_id=group_id, photo=img_buf)
                     await asyncio.sleep(0.5)
 
                     # 2. Total Excel
@@ -4315,7 +6064,7 @@ async def run_push(
                     generate_summary.build_total_excel(zone_result, zone_xlsx)
                     with open(zone_xlsx, "rb") as f:
                         await safe_api_call(
-                            context.bot.send_document,
+                            sender_bot.send_document,
                             chat_id=group_id,
                             document=f,
                             filename=os.path.basename(zone_xlsx),
@@ -4324,7 +6073,7 @@ async def run_push(
                     zone_sent += 1
                     await asyncio.sleep(1.0)
                 except Exception as e:
-                    log.error(f"Zone forward to {group_id} ({zone_key}): {e}")
+                    log.exception(f"Zone forward to {group_id} ({zone_key}): {e}")
 
             if zone_sent:
                 await send_requester_text(
@@ -4636,6 +6385,59 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@pm_required_handler
+async def cmd_delayed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for /delayed or /ge3 or /backlog command to export NOT ASSIGN & DELIVERY >= 3 DAYS."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+
+    args = [a.strip() for a in (context.args or []) if a.strip()]
+    min_days = 3
+    if args and args[0].isdigit():
+        min_days = int(args[0])
+
+    msg = await send_requester_text(update, context, f"⏳ Fetching live TMS data for Delayed Backlog (>= {min_days} Days / 72+ Hours)...")
+    tmpdir = _make_run_cache("delayed_run")
+    stamp = datetime.now().strftime("%d.%m_%HH%M")
+    src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
+
+    try:
+        await asyncio.to_thread(downloader.download_detail, cfg["api"], src, force_refresh=True)
+        import importlib
+        import delayed_report
+        importlib.reload(delayed_report)
+        out_xlsx = os.path.join(tmpdir, f"NOT_ASSIGN_AND_DELIVERY_GE_{min_days}DAYS_{stamp}.xlsx")
+        desktop_xlsx = rf"c:\Users\DELL\Desktop\NOT_ASSIGN_AND_DELIVERY_GE_{min_days}DAYS.xlsx"
+        
+        tot_bills, na_bills, del_bills, weight_kg, cod_usd = await asyncio.to_thread(
+            delayed_report.build_delayed_ge3_report, src, out_xlsx, min_days=min_days
+        )
+        
+        try:
+            import shutil
+            shutil.copyfile(out_xlsx, desktop_xlsx)
+        except Exception:
+            pass
+
+        with open(out_xlsx, "rb") as f_doc:
+            await send_requester_document(
+                update,
+                context,
+                f_doc,
+                filename=f"NOT_ASSIGN_AND_DELIVERY_GE_{min_days}DAYS.xlsx",
+                caption=f"📋 *NOT ASSIGN & DELIVERY (>= {min_days} DAYS)*\n📦 Total Bills: `{tot_bills}` (Not Assign: `{na_bills}`, Delivery: `{del_bills}`)\n⚖️ Weight: `{weight_kg:,.2f} kg` | 💵 COD: `${cod_usd:,.2f}`"
+            )
+        
+        if msg:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+    except Exception as e:
+        log.exception("Error in /delayed command: %s", e)
+        await edit_or_send_requester_text(msg, update, context, f"❌ Error generating delayed report: {e}")
+
+
 @user_guard
 async def cmd_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Delay a bill (ignore it) until a certain date or for a number of days.
@@ -4748,6 +6550,8 @@ async def cmd_undelay(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @pm_required_handler
 async def cmd_delaylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all currently delayed bills and their expiration dates."""
+    if context.args and len(context.args) >= 2:
+        return await cmd_delay(update, context)
     await delete_group_command(update, context)
     delay_path = "delayed_bills.json"
 
@@ -4813,8 +6617,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_group_command(update, context)
     cfg = load_config()
     msg = await send_requester_text(update, context, "Building active bills report...")
-    tmpdir = tempfile.mkdtemp(prefix="report_")
-    track_report_dir(tmpdir)
+    tmpdir = _make_run_cache("report_run")
     stamp = datetime.now().strftime("%d.%m_%HH%M")
     src = os.path.join(tmpdir, f"export_{stamp}.xlsx")
     try:
@@ -5096,6 +6899,7 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                 ws.Cells(1, 2).Value = serial_date
                 ws.Cells(1, 2).NumberFormat = "yyyy-mm-dd"
                 ws.Cells(2, 2).Value = time_serial
+                ws.Cells(2, 2).NumberFormat = "hh:mm:ss"
                 if "Province_Report" in name:
                     ws.Range("A3").Formula = '="BUSINESS REPORT DATE "&TEXT(B1,"dd/mm - ")&TEXT(B2,"hh:mm")'
             except Exception:
@@ -5506,52 +7310,21 @@ async def forward_daily_report_to_group(
             log.warning("Failed forwarding daily report Excel document to %s: %s", target_group_id, e)
 
 
-@pm_required_handler
-async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/dailyreport [date] — generate text daily report (volume, comparison, zero-order offices/branches), render screenshot image and send populated Master Daily Excel."""
-    await delete_group_command(update, context)
+async def execute_daily_report(
+    target_date: date = None,
+    cutoff_time: time = None,
+    target_groups: list = None,
+    update: Update = None,
+    context: ContextTypes.DEFAULT_TYPE = None,
+):
+    """Core pipeline to generate and distribute daily report to requester and groups."""
     cfg = load_config()
-    target_groups = cfg.get("telegram", {}).get("daily_report_group_id", -5587688944)
+    if target_groups is None:
+        target_groups = cfg.get("telegram", {}).get("daily_report_group_id", -5587688944)
     if not isinstance(target_groups, list):
         target_groups = [target_groups]
-    
-    # Parse optional date and time argument
-    # Supports /dailyreport, /dailyreport 15:18, /dailyreport 25/09, /dailyreport 25/09 15:18, /dailyreport 25/09-15:18
-    raw_args = " ".join([a.strip() for a in (context.args or []) if a.strip()])
-    normalized = re.sub(r'(\d{1,2}/\d{1,2}(?:/\d{2,4})?)[-_](\d{1,2}:\d{2})', r'\1 \2', raw_args)
-    tokens = normalized.split()
-    
-    target_date = None
-    cutoff_time = None
-    today = datetime.now().date()
-    
-    for tok in tokens:
-        time_matched = False
-        for t_fmt in ("%H:%M:%S", "%H:%M", "%Hh%M", "%HH%M"):
-            try:
-                t_dt = datetime.strptime(tok, t_fmt)
-                cutoff_time = t_dt.time()
-                time_matched = True
-                break
-            except ValueError:
-                pass
-        if time_matched:
-            continue
-            
-        date_matched = False
-        for d_fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m"):
-            try:
-                dt = datetime.strptime(tok, d_fmt)
-                if "%d/%m" in d_fmt:
-                    dt = dt.replace(year=today.year)
-                target_date = dt.date()
-                date_matched = True
-                break
-            except ValueError:
-                pass
-        if date_matched:
-            continue
 
+    today = datetime.now().date()
     if target_date is None:
         target_date = today
 
@@ -5563,12 +7336,14 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     date_display = target_date.strftime("%d/%m")
     time_display = cutoff_time.strftime("%H:%M")
-    msg = await send_requester_text(update, context, f"Generating daily report for {date_display} - {time_display}...")
-    
+
+    msg = None
+    if update and context:
+        msg = await send_requester_text(update, context, f"Generating daily report for {date_display} - {time_display}...")
+
     tmpdir = tempfile.mkdtemp(prefix="daily_report_")
     track_report_dir(tmpdir)
     src = os.path.join(tmpdir, f"export_pickup_revenue_{target_date.strftime('%Y%m%d')}.xlsx")
-    
     last_week_date = target_date - timedelta(days=7)
     
     try:
@@ -5967,18 +7742,21 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chunk = media_list[chunk_idx:chunk_idx+10]
                         await send_requester_media_group(update, context, chunk)
                     
-                # Send the Excel file
-                with open(output_xlsx_path, "rb") as f:
-                    await send_requester_document(
-                        update, context, f,
-                        output_xlsx_name,
-                        caption=f"📊 Master Daily Excel {date_formatted} {time_str}"
-                    )
-                try:
-                    await safe_api_call(msg.delete)
-                except Exception:
-                    pass
-                await send_requester_text(update, context, report_text)
+                # Send to requester if triggered via user command
+                if update and context:
+                    if output_xlsx_path and os.path.exists(output_xlsx_path):
+                        with open(output_xlsx_path, "rb") as f:
+                            await send_requester_document(
+                                update, context, f,
+                                output_xlsx_name,
+                                caption=f"📊 Master Daily Excel {date_formatted} {time_str}"
+                            )
+                    if msg:
+                        try:
+                            await safe_api_call(msg.delete)
+                        except Exception:
+                            pass
+                    await send_requester_text(update, context, report_text)
                 
                 # Forward to target registered group(s) (e.g. Chat ID: -5587688944)
                 for gid in target_groups:
@@ -5998,7 +7776,8 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         log.warning(f"Error forwarding daily report to group {gid}: {e_fwd}")
             except Exception as exc:
                 log.exception("Error generating populated master Excel")
-                await edit_or_send_requester_text(msg, update, context, report_text + f"\n\n⚠️ Error generating Excel/Image: {exc}")
+                if msg and update and context:
+                    await edit_or_send_requester_text(msg, update, context, report_text + f"\n\n⚠️ Error generating Excel/Image: {exc}")
                 for gid in target_groups:
                     try:
                         await forward_daily_report_to_group(
@@ -6010,7 +7789,8 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         log.warning(f"Error forwarding daily report to group {gid}: {e_fwd}")
         else:
             log.warning(f"Template not found at {template_path}")
-            await edit_or_send_requester_text(msg, update, context, report_text + "\n\n⚠️ Note: Master Daily Report template was not found, so no Excel file was attached.")
+            if msg and update and context:
+                await edit_or_send_requester_text(msg, update, context, report_text + "\n\n⚠️ Note: Master Daily Report template was not found, so no Excel file was attached.")
             for gid in target_groups:
                 try:
                     await forward_daily_report_to_group(
@@ -6022,8 +7802,102 @@ async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     log.warning(f"Error forwarding daily report to group {gid}: {e_fwd}")
         
     except Exception as e:
-        log.exception("Error in /dailyreport")
-        await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+        log.exception("Error in daily report pipeline")
+        if msg and update and context:
+            await edit_or_send_requester_text(msg, update, context, f"Error: {e}")
+
+
+@pm_required_handler
+async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/dailyreport [date] [time] — generate text daily report, render screenshot image and send master Excel."""
+    await delete_group_command(update, context)
+    cfg = load_config()
+    target_groups = cfg.get("telegram", {}).get("daily_report_group_id", -5587688944)
+    if not isinstance(target_groups, list):
+        target_groups = [target_groups]
+
+    raw_args = " ".join([a.strip() for a in (context.args or []) if a.strip()])
+    normalized = re.sub(r'(\d{1,2}/\d{1,2}(?:/\d{2,4})?)[-_](\d{1,2}:\d{2})', r'\1 \2', raw_args)
+    tokens = normalized.split()
+
+    target_date = None
+    cutoff_time = None
+    today = datetime.now().date()
+
+    for tok in tokens:
+        time_matched = False
+        for t_fmt in ("%H:%M:%S", "%H:%M", "%Hh%M", "%HH%M"):
+            try:
+                t_dt = datetime.strptime(tok, t_fmt)
+                cutoff_time = t_dt.time()
+                time_matched = True
+                break
+            except ValueError:
+                pass
+        if time_matched:
+            continue
+
+        date_matched = False
+        for d_fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m"):
+            try:
+                dt = datetime.strptime(tok, d_fmt)
+                if "%d/%m" in d_fmt:
+                    dt = dt.replace(year=today.year)
+                target_date = dt.date()
+                date_matched = True
+                break
+            except ValueError:
+                pass
+        if date_matched:
+            continue
+
+    if target_date is None:
+        target_date = today
+
+    if cutoff_time is None:
+        if target_date == today:
+            cutoff_time = datetime.now().time()
+        else:
+            cutoff_time = time(23, 59, 59)
+
+    await execute_daily_report(
+        target_date=target_date,
+        cutoff_time=cutoff_time,
+        target_groups=target_groups,
+        update=update,
+        context=context,
+    )
+
+
+async def cmd_set_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Updates the Metfone API Bearer Token in config.json across all bot directories."""
+    args = (context.args or [])
+    if not args:
+        await send_requester_text(
+            update, context,
+            "⚠️ *Please provide your new Metfone API Bearer token:*\n"
+            "Usage: `/settoken eyJhbGci...` or `/token eyJhbGci...`"
+        )
+        return
+
+    raw_token = " ".join(args).strip()
+    if raw_token.lower().startswith("bearer "):
+        raw_token = raw_token[7:].strip()
+
+    if len(raw_token) < 20:
+        await send_requester_text(update, context, "❌ Invalid Bearer token string (too short).")
+        return
+
+    try:
+        update_bearer_token(raw_token)
+        await send_requester_text(
+            update, context,
+            "✅ *API Bearer Token updated successfully!*\n"
+            "All `/export`, `/total`, `/speed`, and `/penalty` commands will now use the new token."
+        )
+    except Exception as e:
+        log.exception("Error updating bearer token: %s", e)
+        await send_requester_text(update, context, f"❌ Failed to update Bearer token: {e}")
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6077,7 +7951,27 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # (Pending remark handling removed)
+    # Direct plain-text command shortcuts (without leading /)
+    if lower_parts:
+        first_token = lower_parts[0].lstrip("/").strip()
+        if first_token == "penalty":
+            context.args = parts[1:]
+            return await cmd_penalty(update, context)
+        elif first_token == "speed":
+            context.args = parts[1:]
+            return await cmd_speed(update, context)
+        elif first_token == "tomorrow":
+            context.args = parts[1:]
+            return await cmd_tomorrow(update, context)
+        elif first_token == "total":
+            context.args = parts[1:]
+            return await cmd_total(update, context)
+        elif first_token in ("dvc", "dvczone"):
+            context.args = ["dvc"] + parts[1:]
+            return await cmd_total(update, context)
+        elif first_token == "dailyreport":
+            context.args = parts[1:]
+            return await cmd_daily_report(update, context)
 
     if keyword in lower_parts:
         idx = lower_parts.index(keyword)
@@ -6088,6 +7982,120 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle uncaught errors in updates or polling gracefully without spamming logs."""
+    err = context.error
+    if isinstance(err, (NetworkError, RetryAfter, asyncio.CancelledError)):
+        log.warning("Telegram network glitch (handled automatically): %s", err)
+        return
+    err_str = str(err)
+    if "getaddrinfo failed" in err_str or "ConnectError" in err_str or "ConnectTimeout" in err_str:
+        log.warning("Telegram DNS/Connection glitch (handled automatically): %s", err)
+        return
+    log.error("Exception while handling an update: %s", err, exc_info=err)
+
+
+async def cmd_dvc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shortcut handler for /dvc [zone]."""
+    args = list(context.args or [])
+    context.args = ["dvc"] + [a for a in args if a.lower() not in ("dvc", "dvczone")]
+    return await cmd_total(update, context)
+
+
+def create_bot_app(token: str, proxy_url: str = None, is_primary: bool = True) -> Application:
+    builder = (
+        Application.builder()
+        .token(token)
+        .connection_pool_size(100)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .pool_timeout(60.0)
+        .get_updates_connection_pool_size(20)
+        .get_updates_connect_timeout(30.0)
+        .get_updates_read_timeout(30.0)
+        .get_updates_pool_timeout(60.0)
+    )
+
+    if is_primary:
+        builder = builder.post_init(on_post_init)
+
+    if proxy_url:
+        builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
+        log.info("[%s...] Using proxy: %s", token[:12], proxy_url)
+
+    app = builder.build()
+    app.add_error_handler(global_error_handler)
+    app.add_handler(CommandHandler("settoken",     cmd_set_token))
+    app.add_handler(CommandHandler("token",        cmd_set_token))
+    app.add_handler(CommandHandler("app",          cmd_app))
+    app.add_handler(CommandHandler("push",         run_push))
+    app.add_handler(CommandHandler("total",        cmd_total))
+    app.add_handler(CommandHandler("pending",      cmd_total))
+    app.add_handler(CommandHandler("dvc",          cmd_dvc))
+    app.add_handler(CommandHandler("dvczone",      cmd_dvc))
+    app.add_handler(CommandHandler("penalty",      cmd_penalty))
+    app.add_handler(CommandHandler("speed",        cmd_speed))
+    app.add_handler(CommandHandler("tomorrow",     cmd_tomorrow))
+    app.add_handler(CommandHandler("vs",           cmd_vs))
+    app.add_handler(CommandHandler("vs2",          cmd_vs2))
+    app.add_handler(CommandHandler("help",         cmd_help))
+    app.add_handler(CommandHandler("pause",        cmd_pause))
+    app.add_handler(CommandHandler("stop",         cmd_pause))
+    app.add_handler(CommandHandler("resume",       cmd_resume))
+    app.add_handler(CommandHandler("start",        cmd_resume))
+    app.add_handler(CommandHandler("schedule",      cmd_schedule))
+    app.add_handler(CommandHandler("status",       cmd_status))
+    app.add_handler(CommandHandler("statues",      cmd_statues))
+    app.add_handler(CommandHandler("statuses",     cmd_statues))
+    app.add_handler(CommandHandler("mode",         cmd_mode))
+    app.add_handler(CommandHandler("register",     cmd_register))
+    app.add_handler(CommandHandler("unregister",   cmd_unregister))
+    app.add_handler(CommandHandler("groups",       cmd_groups))
+    app.add_handler(CommandHandler("trackinglog",  cmd_trackinglog))
+    app.add_handler(CommandHandler("export",       cmd_export))
+    app.add_handler(CommandHandler("find",         cmd_find))
+    app.add_handler(CommandHandler("ask",          cmd_ask))
+    app.add_handler(CommandHandler("check",        cmd_check))
+    app.add_handler(CommandHandler("qr",           cmd_qr))
+    app.add_handler(CommandHandler("trace",        cmd_trace))
+    app.add_handler(CommandHandler("add",          cmd_add))
+    app.add_handler(CommandHandler("remove",       cmd_remove))
+    app.add_handler(CommandHandler("del",          cmd_remove))
+    app.add_handler(CommandHandler("list",         cmd_list))
+    app.add_handler(CommandHandler("delay",        cmd_delay))
+    app.add_handler(CommandHandler("undelay",      cmd_undelay))
+    app.add_handler(CommandHandler("delaylist",    cmd_delaylist))
+    app.add_handler(CommandHandler("delayed",      cmd_delayed))
+    app.add_handler(CommandHandler("ge3",          cmd_delayed))
+    app.add_handler(CommandHandler("backlog",      cmd_delayed))
+    app.add_handler(CommandHandler("clean",        cmd_clean))
+    app.add_handler(CommandHandler("report",       cmd_report))
+    app.add_handler(CommandHandler("deletereport", cmd_delete_report))
+    app.add_handler(CommandHandler("delreport",    cmd_delete_report))
+    app.add_handler(CommandHandler("dailyreport",  cmd_daily_report))
+    app.add_handler(CommandHandler("test",         cmd_test))
+    app.add_handler(CommandHandler("testmode",     cmd_test_mode))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    return app
+
+
+def run_bot_in_thread(token: str, proxy_url: str = None, is_primary: bool = True):
+    """Run a single bot instance in its own event loop thread."""
+    import time
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    log.info("Bot instance running for token: %s... (primary=%s)", token[:12], is_primary)
+    while True:
+        try:
+            app = create_bot_app(token, proxy_url, is_primary=is_primary)
+            app.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
+            break
+        except Exception as e:
+            log.error("Bot polling error [%s...]: %s. Restarting polling in 5s...", token[:12], e)
+            time.sleep(5)
+
+
 def main():
     # Start the WebApp HTTP Server in a background daemon thread
     server_thread = threading.Thread(target=start_webapp_server, daemon=True)
@@ -6095,37 +8103,41 @@ def main():
 
     cfg   = load_config()
     tg    = cfg["telegram"]
-    token = tg["bot_token"]
-    if "DIEN_" in token:
-        raise SystemExit("Set bot_token in config.json first.")
 
-    builder = (
-        Application.builder()
-        .token(token)
-        .connect_timeout(30.0)
-        .read_timeout(30.0)
-        .write_timeout(30.0)
-        .pool_timeout(30.0)
-        .get_updates_connect_timeout(30.0)
-        .get_updates_read_timeout(30.0)
-    )
+    tokens = []
+    primary_token = tg.get("bot_token")
+    if primary_token and "DIEN_" not in primary_token:
+        tokens.append(primary_token)
+
+    global _PRIMARY_TOKEN
+    _PRIMARY_TOKEN = primary_token
+
+    configured_tokens = tg.get("bot_tokens", [])
+    if isinstance(configured_tokens, list):
+        for t in configured_tokens:
+            if t and "DIEN_" not in t and t not in tokens:
+                tokens.append(t)
+
+    # Secondary Bot Token (2 in 1 mode)
+    secondary_token = "8991532647:AAGDzP1TLj8c1fQ1u7v5YQTbMNMtOVtuBto"
+    if secondary_token not in tokens:
+        tokens.append(secondary_token)
+
+    if not tokens:
+        raise SystemExit("Set bot_token or bot_tokens in config.json first.")
 
     proxy_url = tg.get("proxy_url")
-    if proxy_url:
-        builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
-        log.info("Using proxy: %s", proxy_url)
 
-    app = builder.build()
-    app.add_handler(CommandHandler("dailyreport", cmd_daily_report))
+    log.info("Starting %d Bot Instance(s) (2-in-1 Mode): %s", len(tokens), [t[:12] + "..." for t in tokens])
+    log.info("Bot running. Commands: push, /total, /vs, /vs2, /speed, /tomorrow, /export, /find, /ask, /check, /trace, /statues, /help, /pause, /resume, /status, /mode, /register, /groups, /add, /remove, /list, /delay, /undelay, /delaylist, /clean, /qr, /deletereport, /dailyreport")
 
-    log.info("Bot running. Commands: push, /total, /vs, /vs2, /export, /find, /ask, /check, /trace, /statues, /help, /pause, /resume, /status, /mode, /register, /groups, /add, /remove, /list, /delay, /undelay, /delaylist, /clean, /qr, /deletereport, /dailyreport")
-    try:
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        if "Conflict" in str(e):
-            log.error("Another bot instance is already running. Stop it first, then restart.")
-        else:
-            raise
+    # If multiple tokens, run secondary bots in worker threads (is_primary=False)
+    for tok in tokens[1:]:
+        t = threading.Thread(target=run_bot_in_thread, args=(tok, proxy_url, False), daemon=True)
+        t.start()
+
+    # Run primary bot in main thread (is_primary=True)
+    run_bot_in_thread(tokens[0], proxy_url, True)
 
 
 if __name__ == "__main__":
