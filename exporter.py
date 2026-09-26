@@ -20,7 +20,7 @@ import pythoncom
 from PIL import Image
 
 
-def export_range_to_image(ws, cell_range, out_path, hide_cols=None, widen_cols=None, scale=2.0):
+def export_range_to_image(ws, cell_range, out_path, hide_cols=None, hide_rows=None, widen_cols=None, scale=2.0):
     """
     Exports a specific worksheet range to PNG using Excel COM CopyPicture.
     """
@@ -40,6 +40,14 @@ def export_range_to_image(ws, cell_range, out_path, hide_cols=None, widen_cols=N
                 ws.Columns(c).Hidden = True
             except Exception as e:
                 print(f"[EXPORTER] Error hiding column {c}: {e}")
+
+    # Hide requested rows
+    if hide_rows:
+        for r in hide_rows:
+            try:
+                ws.Rows(r).Hidden = True
+            except Exception as e:
+                print(f"[EXPORTER] Error hiding row {r}: {e}")
 
     # Widen columns if needed to prevent '###' overflow
     orig_widths = {}
@@ -94,6 +102,14 @@ def export_range_to_image(ws, cell_range, out_path, hide_cols=None, widen_cols=N
     ch.Export(abs_out_path, "PNG")
     co.Delete()
 
+    # Restore unhidden rows
+    if hide_rows:
+        for r in hide_rows:
+            try:
+                ws.Rows(r).Hidden = False
+            except Exception:
+                pass
+
     # Restore unhidden columns
     if hide_cols:
         for c in hide_cols:
@@ -124,7 +140,7 @@ def export_5_report_images(xlsx_path, out_dir):
 
     Template: 00.Master Daily Report - new - 1509.xlsx (Sept version, 45MB)
 
-    1. BILL ORDER - DAY:       Province_Report!A5:X30   (22 branches, no hidden cols)
+    1. BILL ORDER - DAY:       Province_Report!A3:W30   (Title banner A3:W3, Row 4 hidden, 22 branches)
     2. [SERVICE POINT] REPORT: SP_RP!B3:U44             (36 SPs by province)
     3. [AGENT] REPORT:         Agent_RP!A3:P28          (22 branches)
     4. [SHOWROOM] REPORT:      Showroom_RP!A3:P28       (22 branches)
@@ -158,13 +174,15 @@ def export_5_report_images(xlsx_path, out_dir):
             wb = excel.Workbooks.Open(abs_xlsx, 0, False, 5, '', '', True, 1, '', True, False, 0, False, 1, 1)
 
         # ----------------------------------------------------------------
-        # 1. BILL ORDER - DAY: Province_Report!A5:X30
-        #    Rows: 5-7=headers, 8=MEC, 9-30=22 branches
-        #    Cols: A-X = 22 branches metrics
+        # 1. BILL ORDER - DAY: Province_Report!A3:W30
+        #    Row 3: BUSINESS REPORT DATE dd/mm - hh:mm (Red title banner)
+        #    Row 4: Blank spacing row (Hidden)
+        #    Rows 5-7=headers, 8=MEC, 9-30=22 branches
+        #    Cols: A-W (hide Col X "Point")
         # ----------------------------------------------------------------
         ws_p = wb.Worksheets("Province_Report")
         p1 = os.path.join(out_dir, "1_day_report.png")
-        export_range_to_image(ws_p, "A5:X30", p1)
+        export_range_to_image(ws_p, "A3:W30", p1, hide_rows=[4], hide_cols=["X"])
         results["img1"] = p1
 
         # ----------------------------------------------------------------

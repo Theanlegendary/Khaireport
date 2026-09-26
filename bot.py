@@ -6978,21 +6978,29 @@ def build_master_daily_report_excel(template_path, raw_excel_path, output_path, 
                     for idx, (dt, row) in enumerate(zip(parsed_dates, rows_nc)):
                         r = idx + 2
                         m = int(dt.month) if pd.notna(dt) else 9
-                        y = int(dt.year) if pd.notna(dt) else 2026
-                        d = int(dt.day) if pd.notna(dt) else 1
+                        b_val = (dt.date() - date(1899, 12, 30)).days if pd.notna(dt) else serial_date
+                        c_formula = f"=IFERROR(VLOOKUP(O{r},'Tham chiếu'!$S$2:$X$26,6,FALSE), O{r})"
                         
-                        b_formula = f"=DATE({y},{m},{d})"
-                        c_formula = f"=VLOOKUP(O{r},'Tham chiếu'!$S$2:$X$26,6,FALSE)"
-                        d_formula = f'=IFERROR(VALUE(RIGHT(VALUE(V{r}),LEN(V{r})-FIND("855",V{r},1)-2)), "")'
+                        raw_p = str(row[14]) if len(row) > 14 and pd.notna(row[14]) else ""
+                        clean_p = re.sub(r'[^0-9]', '', raw_p.split('.')[0])
+                        if clean_p.startswith('855'):
+                            clean_p = clean_p[3:]
+                        clean_p = clean_p.lstrip('0')
+                        try:
+                            d_val = int(clean_p) if clean_p else ""
+                        except Exception:
+                            d_val = clean_p
+                            
                         e_formula = f"=MID(P{r},4,1)"
                         f_formula = f'=IF(M{r}<>"","done","not yet")'
                         g_formula = f"=COUNTIFS('Data Revenue'!$A:$A,'Data new Customer'!A{r},'Data Revenue'!$O:$O,'Data new Customer'!D{r})"
                         
-                        cols_a_g.append([m, b_formula, c_formula, d_formula, e_formula, f_formula, g_formula])
+                        cols_a_g.append([m, b_val, c_formula, d_val, e_formula, f_formula, g_formula])
 
                     # Write A to G in single block
                     rng_ag = ws_nc.Range(ws_nc.Cells(2, 1), ws_nc.Cells(n_rows + 1, 7))
                     rng_ag.Value = tuple(tuple(row) for row in cols_a_g)
+                    ws_nc.Range(ws_nc.Cells(2, 2), ws_nc.Cells(n_rows + 1, 2)).NumberFormat = "yyyy-mm-dd"
                     print(f"[DEBUG] Successfully wrote {n_rows} rows into Data new Customer!", flush=True)
             except Exception as e:
                 import logging
