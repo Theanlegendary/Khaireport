@@ -7180,14 +7180,6 @@ def format_daily_report_text(metrics: dict, target_date, cutoff_time) -> str:
     agent_count = metrics.get("agent", 0)
     sr_count = metrics.get("showroom", 0)
     
-    # Zero-order service points
-    zero_pnp = metrics.get("zero_pnp", [])
-    zero_prov = metrics.get("zero_prov", [])
-    total_zero_pos = len(zero_pnp) + len(zero_prov)
-    
-    # Zero-order branches
-    zero_branches = metrics.get("under_5_branches", [])
-    
     lines = [
         f"📦 BÁO CÁO SẢN LƯỢNG CẬP NHẬT ĐẾN HIỆN TẠI {date_formatted}-{time_str}",
         f"Báo cáo PTGĐ Anh @Trungnh2 và các anh GĐCN @everyone PKD kính gửi kết quả sản lượng cập nhật mới nhất:",
@@ -7197,44 +7189,6 @@ def format_daily_report_text(metrics: dict, target_date, cutoff_time) -> str:
         f"*Đại lý: {agent_count} đơn",
         f"*Showroom: {sr_count} đơn   ",
     ]
-    
-    # New Customers section
-    nc_inday = metrics.get("new_cust_inday", 0)
-    nc_month = metrics.get("new_cust_month", 0)
-    nc_orders_inday = metrics.get("new_cust_orders_inday", 0)
-    nc_comp = metrics.get("new_cust_comp_pct", 0.0)
-
-    if nc_month > 0 or nc_inday > 0:
-        lines.append("  ")
-        lines.append("📌 Khách hàng mới:")
-        if nc_orders_inday > 0:
-            lines.append(f"*Trong ngày: {nc_inday} KH ({nc_orders_inday} đơn)")
-        else:
-            lines.append(f"*Trong ngày: {nc_inday} KH")
-        if nc_comp > 0:
-            lines.append(f"*Lũy kế tháng: {nc_month:,} KH (Đạt {nc_comp}%)".replace(",", "."))
-        else:
-            lines.append(f"*Lũy kế tháng: {nc_month:,} KH".replace(",", "."))
-
-    lines.append("  ")
-    lines.append(f"📌 {total_zero_pos} Bưu cục chưa phát sinh đơn:")
-    if zero_pnp:
-        lines.append(f"PNPP({', '.join(zero_pnp)})")
-    for po in zero_prov:
-        lines.append(f"+{po}")
-    if total_zero_pos == 0:
-        lines.append("Không có")
-    lines.append("  ")
-    
-    lines.append(f"📌 {len(zero_branches)} Chi nhánh chưa phát sinh đơn:")
-    if zero_branches:
-        for b_name in zero_branches:
-            lines.append(f"+{b_name}")
-    else:
-        lines.append("Không có")
-    lines.append("  ")
-    
-    lines.append("Trân trọng.")
     return "\n".join(lines)
 
 
