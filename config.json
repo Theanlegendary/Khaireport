@@ -1,58 +1,59 @@
 {
   "telegram": {
     "bot_token": "8988179337:AAGJsJ9XbVMpxbQTDSJ-2zeLrl0Nt8LWiCQ",
-    "daily_report_group_id": -5587688944,
-    "daily_report_schedule": {
-      "enabled": true,
-      "time": "18:00",
-      "target_group_ids": [
-        -5587688944
-      ]
-    },
+    "bot_tokens": [
+      "8988179337:AAGJsJ9XbVMpxbQTDSJ-2zeLrl0Nt8LWiCQ",
+      "8991532647:AAGDzP1TLj8c1fQ1u7v5YQTbMNMtOVtuBto"
+    ],
     "keyword": "push",
     "allowed_chat_ids": [],
     "allowed_user_ids": [],
     "proxy_url": "",
     "webapp_url": "http://localhost:8080",
+    "daily_report_group_id": -1004391592278,
+    "daily_report_schedule": {
+      "enabled": true,
+      "time": "18:00",
+      "target_group_ids": [
+        -1004391592278
+      ]
+    },
     "forward_mapping": {
-      "-5216161772": [
-        "PNPP014"
-      ],
-      "-5221155152": [
-        "PNPP010"
-      ],
-      "-1003897834323": [
-        "PNPP007"
-      ],
-      "-5212661819": [
-        "PNPP012"
-      ],
       "-1003929665530": [
         "PNPP001"
-      ],
-      "-5280197895": [
-        "PNPP003"
-      ],
-      "-1003704589057": [
-        "PNPP004"
-      ],
-      "-1004456581514": [
-        "PNPP008"
-      ],
-      "-5254303211": [
-        "PNPP011"
-      ],
-      "-1003728156246": [
-        "PNPP013"
       ],
       "-1003951534578": [
         "PNPP002"
       ],
+      "-1003704589057": [
+        "PNPP004"
+      ],
       "-5154787193": [
         "PNPP005"
       ],
-      "-5097607533": [
-        "KANP001"
+      "-5018087305": [
+        "PNPP006"
+      ],
+      "-1003897834323": [
+        "PNPP007"
+      ],
+      "-1004456581514": [
+        "PNPP008"
+      ],
+      "-1004340849795": [
+        "PNPP009"
+      ],
+      "-5221155152": [
+        "PNPP010"
+      ],
+      "-5254303211": [
+        "PNPP011"
+      ],
+      "-5212661819": [
+        "PNPP012"
+      ],
+      "-1003728156246": [
+        "PNPP013"
       ],
       "-1003736417202": [
         "SIEP001"
@@ -93,9 +94,6 @@
       "-5230030125": [
         "KRAP001"
       ],
-      "-1004340849795": [
-        "PNPP009"
-      ],
       "-1003980820463": [
         "BATP001"
       ],
@@ -110,6 +108,24 @@
       ],
       "-1004437427485": [
         "MONP001"
+      ],
+      "-1003970979375": [
+        "KANP001"
+      ],
+      "-1004440737878": [
+        "PREP001"
+      ],
+      "-1003879191883": [
+        "KAMP001"
+      ],
+      "-1004438397974": [
+        "PNPP003"
+      ],
+      "-1004373667000": [
+        "PNPP014"
+      ],
+      "-1004475176559": [
+        "SVAP001"
       ]
     },
     "image_mode": "long",
@@ -117,11 +133,11 @@
   },
   "api": {
     "url": "https://gw-express.metfone.com.kh/tms-report/api/v1/reports/stages/export-detail",
-    "bearer_token": "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJ5M3NNemZLdUIweTFwOVlPSWFxT3VwMGFaQlhtOEFuclBILURlUU04NnhZIn0.eyJleHAiOjE3ODE3NjcxNDIsImlhdCI6MTc4MTY4MDc0MiwianRpIjoiNWVlNDkwM2EtYjdiMy00Y2JlLWFiOWItM2U5MzJjZThiMTg3IiwiaXNzIjoiaHR0cHM6Ly9zc28xLWV4cHJlc3MubWV0Zm9uZS5jb20ua2gvcmVhbG1zL3RtcyIsImF1ZCI6ImFjY291bnQiLCJzdWIiOiJhNzMwNGM1Yy03NDk2LTQ2NjQtYmMzNC05NjhhZjU3MmZjZmIiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJUTVNfQU5EUk9JRCIsInNlc3Npb25fc3RhdGUiOiI2Y2E0Yjg0Ni02ZjMzLTQyZjMtYWM1NS05NTNkMzVlYjUxYWIiLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiZGVmYXVsdC1yb2xlcy10bXMiLCJvZmZsaW5lX2FjY2VzcyIsInVtYV9hdXRob3JpemF0aW9uIl19LCJyZXNvdXJjZV9hY2Nlc3MiOnsiYWNjb3VudCI6eyJyb2xlcyI6WyJtYW5hZ2UtYWNjb3VudCIsIm1hbmFnZS1hY2NvdW50LWxpbmtzIiwidmlldy1wcm9maWxlIl19fSwic2NvcGUiOiIiLCJzaWQiOiI2Y2E0Yjg0Ni02ZjMzLTQyZjMtYWM1NS05NTNkMzVlYjUxYWIiLCJjdGgtcG9zdC1wYXRoIjoiXzFfMl8xMzdfMjIxXyIsImN0aC10ZW5hbnQtaWQiOiIyIiwiY3RoLWJyYW5jaC1jb2RlIjoiQkFOIiwiY3RoLXNjb3BlIjoiVlRQX0NBTV9CQU5QMDAxIiwiY3RoLXRlbmFudC1jb2RlIjoiVlRQX0NBTSIsImN0aC1mdWxsLW5hbWUiOiJUbWQxZVdWdUlGWmhiaUJDWVc0PSIsImN0aC1wYXNzd29yZC1jaGFuZ2VkIjoidHJ1ZSIsImN0aC1wb3N0LWNvZGUiOiJCQU5QMDAxIiwiY3RoLXVzZXItaWQiOiIxNDkiLCJjdGgtcGhvbmUiOiIwNzE4Njg0NzE1OTk5IiwiY3RoLXJvbGUtY29kZSI6IkRDIiwiY3RoLXVzZXJuYW1lIjoiMjQwNDk5IiwiY3RoLWJyYW5jaC1wYXRoIjoiXzFfMl8xMzdfIiwiY3RoLXJvbGUtaWQiOiIxIiwiY3RoLWJyYW5jaC1pZCI6IjEzNyIsImN0aC1wb3N0LWlkIjoiMjIxIn0.p4E5DGwLiQMMhmpTefOWUhqqb8qfbL-ZZyDD0AcEmluhcXtyHhWpck1qD7WFoDgs9xOhjHfg5EA6dkQH4I13jjy0NEu3OdRghzKlOOE1kBlZizEeFHy76qCdtARroSOPLG--GVKkgCq2cdGv4wiS7ydaakqDWny7FqbOuOHgOsHDTMUoxDV6Ho7DhZxIox_eUf-31pjiJZp4iMZeQrhjZDLnkW7yV1vhe-OsMCy2KYbUNNIHLBuvqDMOfoxszUdNEDDgKArsyBIHkqNxatHm_G4rLlxo5LQBr7YHJYlDGnbVeOR-QRlfBjx4QB3h7E0tJ_SR0tPB7HClMfvlaTLC5w",
+    "bearer_token": "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJ5M3NNemZLdUIweTFwOVlPSWFxT3VwMGFaQlhtOEFuclBILURlUU04NnhZIn0.eyJleHAiOjE3ODk3MTQxMzcsImlhdCI6MTc4OTYyNzczNywianRpIjoiMGQ0ZDkwY2MtNzllMC00ZjExLWJkMDQtNjBlMTk1MTcwODNiIiwiaXNzIjoiaHR0cHM6Ly9zc28xLWV4cHJlc3MubWV0Zm9uZS5jb20ua2gvcmVhbG1zL3RtcyIsImF1ZCI6ImFjY291bnQiLCJzdWIiOiI0ZmE3N2ZiNC0yMTJjLTQ1ZGQtYjYzYS0zNTI5NTNmMzFiZDEiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJUTVNfQU5EUk9JRCIsInNlc3Npb25fc3RhdGUiOiI5OWU3OTZjZC04YTQ2LTRjYTItYjQ2MS04NTFiZTBhODY4OGYiLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiZGVmYXVsdC1yb2xlcy10bXMiLCJvZmZsaW5lX2FjY2VzcyIsInVtYV9hdXRob3JpemF0aW9uIl19LCJyZXNvdXJjZV9hY2Nlc3MiOnsiYWNjb3VudCI6eyJyb2xlcyI6WyJtYW5hZ2UtYWNjb3VudCIsIm1hbmFnZS1hY2NvdW50LWxpbmtzIiwidmlldy1wcm9maWxlIl19fSwic2NvcGUiOiIiLCJzaWQiOiI5OWU3OTZjZC04YTQ2LTRjYTItYjQ2MS04NTFiZTBhODY4OGYiLCJjdGgtcG9zdC1wYXRoIjoiXzFfMl8xMzdfMjIxXyIsImN0aC10ZW5hbnQtaWQiOiIyIiwiY3RoLWJyYW5jaC1jb2RlIjoiQkFOIiwiY3RoLXNjb3BlIjoiVlRQX0NBTV9CQU5QMDAxIiwiY3RoLXRlbmFudC1jb2RlIjoiVlRQX0NBTSIsImN0aC1mdWxsLW5hbWUiOiJVR2gxYm1jZ1JHRnVaeUJVYUdsbGJnPT0iLCJjdGgtcGFzc3dvcmQtY2hhbmdlZCI6InRydWUiLCJjdGgtcG9zdC1jb2RlIjoiQkFOUDAwMSIsImN0aC11c2VyLWlkIjoiMzEzIiwiY3RoLXBob25lIjoiMDMxNDkzMDAwMCIsImN0aC1yb2xlLWNvZGUiOiJDQUNDIiwiY3RoLXVzZXJuYW1lIjoidGhpZW5wZCIsImN0aC1icmFuY2gtcGF0aCI6Il8xXzJfMTM3XyIsImN0aC1zdGFmZi1jb2RlIjoidGhpZW5wZCIsImN0aC1yb2xlLWlkIjoiMTUiLCJjdGgtYnJhbmNoLWlkIjoiMTM3IiwiY3RoLXBvc3QtaWQiOiIyMjEifQ.nFTh-cvQNWVH7jfxuKARQCPpt3bZXlwTCDnFU90IuX9TJOSVM9nai74JfD1sLpPr94x_lJnDIZPY8QbzgmhRcgYcHjRxjzAcvi0UweubnZW_BLOdRJY0Hf_G476OrnXlP09FQNDBwMzbxLlt4wm78iyeN1jDwBGWPhII8fzVJLAzjsHSx6ImctLtkl_YrFRK6fsWg2ijbDirVyBhPeQWtuBj4uHrLHSUG4k2ABNasI6q3izquL_wqgDQ8q1-AZbF3DLYdi03DKm8UH-MLfDWSPQZE57GQNAAQAoVt6zTIHCzMEVlqn2cmqzwTVJ2qJsbfQk0BdmGtjxuyevb-i-r1Q",
     "x_client_id": "TMS_ANDROID",
-    "branch_code": "PRE,PNP,SVA,KAN,KAM,KOH,SIH,SPE,TAK,BAN,BAT,CHH,PUR,SIE,PRH,ODD,THO,CHA,KRA,TBK,ROT,MON,STU",
-    "date_range_days": 14,
-    "cache_minutes": 5
+    "branch_code": "MEGA,MEGA1,DVCMEGA1,PRE,PNP,SVA,KAN,KAM,KOH,SIH,SPE,TAK,BAN,BAT,CHH,PUR,SIE,PRH,ODD,THO,CHA,KRA,TBK,ROT,MON,STU",
+    "date_range_days": 30,
+    "cache_minutes": 0
   },
   "pivot": {
     "title": "PENDING BILL CHECK",
@@ -558,27 +574,42 @@
       "title": "DELIVERY BILL CHECK",
       "is_label": "Delivery",
       "status_codes": [
-        "401",
         "400",
-        "430",
-        "420",
+        "401",
         "402",
-        "460"
+        "420",
+        "430",
+        "460",
+        "470",
+        "471",
+        "472",
+        "480",
+        "500",
+        "510",
+        "511",
+        "512"
       ]
     },
     {
-      "key": "pending",
+      "key": "transit",
       "title": "PENDING BILL CHECK",
-      "is_label": "Pending",
+      "is_label": "Transit",
       "status_codes": [
         "210",
+        "230",
+        "300",
         "302",
         "306",
-        "310",
+        "311"
+      ]
+    },
+    {
+      "key": "branch",
+      "title": "PENDING BILL CHECK",
+      "is_label": "Branch",
+      "status_codes": [
         "309",
-        "311",
-        "500",
-        "300"
+        "310"
       ]
     }
   ],
@@ -592,7 +623,7 @@
     "center_group_columns": false,
     "wrap_text": true,
     "show_borders": true,
-    "font_name": "SF Pro",
+    "font_name": "Arial",
     "title_fill_color": "1F4E78",
     "header_fill_color": "1F4E78",
     "header_font_color": "FFFFFF",
@@ -622,6 +653,8 @@
       "PNPP012": "Zone 1",
       "PNPP013": "Zone 1",
       "PNPP014": "Zone 1",
+      "MYGO01": "Zone 1",
+      "PNP-MYGO01": "Zone 1",
       "PREP001": "Zone 1",
       "SVAP001": "Zone 1",
       "KAMP001": "Zone 2",
@@ -684,7 +717,6 @@
   },
   "total_zones": {
     "zone1": [
-      "KANP001",
       "PNPP001",
       "PNPP002",
       "PNPP003",
@@ -699,6 +731,7 @@
       "PNPP012",
       "PNPP013",
       "PNPP014",
+      "KANP001",
       "PREP001",
       "SVAP001"
     ],
